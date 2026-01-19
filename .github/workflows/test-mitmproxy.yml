@@ -29,10 +29,12 @@ jobs:
           # Create a Docker network for mitmproxy
           docker network create --subnet=172.30.0.0/24 mitmproxy-net
 
-          # Start mitmproxy container
+          # Start mitmproxy container with NET_ADMIN capability for WireGuard
           docker run -d --name mitmproxy \
             --network mitmproxy-net \
             --ip 172.30.0.2 \
+            --cap-add=NET_ADMIN \
+            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
             -p 51820:51820/udp \
             -v "$(pwd)/mitmproxy_wg_logger.py:/app/mitmproxy_wg_logger.py:ro" \
             mitmproxy/mitmproxy:latest \
