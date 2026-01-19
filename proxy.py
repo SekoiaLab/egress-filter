@@ -109,6 +109,8 @@ class ConnectionLogger:
         self._bpf_links.append(self._bpf_obj.program("handle_sockops").attach_cgroup(cgroup))
         self._bpf_links.append(self._bpf_obj.program("handle_sendmsg4").attach_cgroup(cgroup))
         self._bpf_links.append(self._bpf_obj.program("handle_sendmsg6").attach_cgroup(cgroup))
+        # kprobe for UDP - works for loopback addresses unlike cgroup hooks
+        self._bpf_links.append(self._bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
 
         self._map_v4 = self._bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
         self._map_v6 = self._bpf_obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=int)
