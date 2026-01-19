@@ -22,6 +22,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libbpf-dev
 
+      - name: Install dependencies
+        run: uv sync
+
       - name: Compile BPF programs
         run: uv run tinybpf docker-compile src/bpf/*.bpf.c
 
@@ -39,7 +42,7 @@ jobs:
           # Start proxy as root (needed for BPF), exclude root's traffic via iptables
           echo "Starting proxy..."
           sudo env PROXY_LOG_FILE=/tmp/proxy.log \
-            $(which uv) run --with mitmproxy --with tinybpf mitmdump -s proxy.py --mode transparent --showhost --set block_global=false &
+            $(pwd)/.venv/bin/python proxy.py &
           PROXY_PID=$!
 
           # Wait for proxy to generate CA certificate (root's home = /root)

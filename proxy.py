@@ -2,6 +2,9 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = ["mitmproxy", "tinybpf"]
+#
+# [tool.uv.sources]
+# tinybpf = { git = "https://github.com/gregclermont/tinybpf.git" }
 # ///
 """Simple mitmproxy transparent proxy that logs all connections with PID tracking."""
 
