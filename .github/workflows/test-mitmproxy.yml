@@ -29,14 +29,15 @@ jobs:
           # Create a Docker network for mitmproxy
           docker network create --subnet=172.30.0.0/24 mitmproxy-net
 
-          # Start mitmproxy container with NET_ADMIN capability for WireGuard
+          # Start mitmproxy container with privileged mode for WireGuard
+          # (NET_ADMIN alone may not be enough for creating wg interfaces)
           docker run -d --name mitmproxy \
             --network mitmproxy-net \
             --ip 172.30.0.2 \
-            --cap-add=NET_ADMIN \
-            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            --privileged \
             -p 51820:51820/udp \
             -v "$(pwd)/mitmproxy_wg_logger.py:/app/mitmproxy_wg_logger.py:ro" \
+            -e PYTHONUNBUFFERED=1 \
             mitmproxy/mitmproxy:latest \
             mitmdump --mode wireguard --set block_global=false -s /app/mitmproxy_wg_logger.py
 
@@ -49,15 +50,20 @@ jobs:
             fi
             if ! docker ps -q -f name=mitmproxy | grep -q .; then
               echo "ERROR: mitmproxy container died"
-              docker logs mitmproxy
+              docker logs mitmproxy 2>&1
               exit 1
+            fi
+            # Show progress every 10 seconds
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "Still waiting... ($i seconds)"
+              docker logs mitmproxy 2>&1 | tail -5
             fi
             sleep 1
           done
 
           # Show logs
           echo "=== mitmproxy log at startup ==="
-          docker logs mitmproxy
+          docker logs mitmproxy 2>&1
 
       - name: Extract and setup WireGuard client
         run: |
@@ -104,6 +110,15 @@ jobs:
           config = '\n'.join(config_lines)
           print("=== WireGuard client config ===")
           print(config)
+          print()
+
+          if not config.strip() or '[Interface]' not in config or '[Peer]' not in config:
+              print("ERROR: Failed to extract valid WireGuard config from mitmproxy logs!")
+              print()
+              print("Raw log content:")
+              print(content)
+              import sys
+              sys.exit(1)
 
           with open("/tmp/wg-client.conf", "w") as f:
               f.write(config)
