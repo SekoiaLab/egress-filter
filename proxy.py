@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mitmproxy", "tinybpf==0.0.1"]
+# dependencies = ["mitmproxy", "tinybpf==0.1.0"]
 #
 # [[tool.uv.index]]
 # name = "tinybpf"

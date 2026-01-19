@@ -229,7 +229,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "mitmproxy" },
-    { name = "tinybpf", specifier = "==0.0.1", index = "https://gregclermont.github.io/tinybpf" },
+    { name = "tinybpf", specifier = "==0.1.0", index = "https://gregclermont.github.io/tinybpf" },
 ]
 
 [[package]]
@@ -574,11 +574,11 @@ wheels = [
 
 [[package]]
 name = "tinybpf"
-version = "0.0.1"
+version = "0.1.0"
 source = { registry = "https://gregclermont.github.io/tinybpf" }
 wheels = [
-    { url = "https://github.com/gregclermont/tinybpf/releases/download/v0.0.1/tinybpf-0.0.1-py3-none-manylinux_2_28_aarch64.whl" },
-    { url = "https://github.com/gregclermont/tinybpf/releases/download/v0.0.1/tinybpf-0.0.1-py3-none-manylinux_2_28_x86_64.whl" },
+    { url = "https://github.com/gregclermont/tinybpf/releases/download/v0.1.0/tinybpf-0.1.0-py3-none-manylinux_2_28_aarch64.whl" },
+    { url = "https://github.com/gregclermont/tinybpf/releases/download/v0.1.0/tinybpf-0.1.0-py3-none-manylinux_2_28_x86_64.whl" },
 ]
 
 [[package]]
