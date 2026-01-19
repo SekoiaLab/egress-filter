@@ -75,6 +75,18 @@ jobs:
           sudo ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
           sudo ip6tables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
 
+          # DNS (UDP 53) -> dns proxy (8053)
+          # Allow systemd-resolved to reach upstream DNS
+          sudo iptables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner systemd-resolve -j RETURN
+          # Allow mitmproxy (root) to query systemd-resolved on localhost
+          sudo iptables -t nat -A OUTPUT -p udp --dport 53 -d 127.0.0.53 -m owner --uid-owner 0 -j RETURN
+          # Redirect everything else to mitmproxy DNS
+          sudo iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 8053
+          # Same for IPv6
+          sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner systemd-resolve -j RETURN
+          sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -d ::1 -m owner --uid-owner 0 -j RETURN
+          sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 8053
+
           # Install mitmproxy certificate as system CA
           sudo mkdir -p /usr/local/share/ca-certificates/extra
           sudo openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt
@@ -104,6 +116,9 @@ jobs:
 
           echo "Testing non-HTTP TCP (SSH to github.com)..."
           echo "" | nc -v github.com 22 2>&1 | head -5 || true
+
+          echo "Testing DNS..."
+          dig +short example.com
 
           echo "All tests passed!"
 
