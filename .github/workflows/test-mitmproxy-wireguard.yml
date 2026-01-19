@@ -74,11 +74,6 @@ jobs:
           sudo iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
           sudo ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
           sudo ip6tables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
-          # DNS (UDP 53) -> dns proxy (8053)
-          sudo iptables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner 0 -j RETURN
-          sudo iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 8053
-          sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -m owner --uid-owner 0 -j RETURN
-          sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 8053
 
           # Install mitmproxy certificate as system CA
           sudo mkdir -p /usr/local/share/ca-certificates/extra
@@ -109,9 +104,6 @@ jobs:
 
           echo "Testing non-HTTP TCP (SSH to github.com)..."
           echo "" | nc -v github.com 22 2>&1 | head -5 || true
-
-          echo "Testing DNS..."
-          dig +short example.com
 
           echo "All tests passed!"
 

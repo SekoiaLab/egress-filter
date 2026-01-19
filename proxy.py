@@ -18,11 +18,10 @@ import os
 import socket
 import ipaddress
 from pathlib import Path
-from mitmproxy import http, tcp, dns, ctx
+from mitmproxy import http, tcp, ctx
 import tinybpf
 
 IPPROTO_TCP = 6
-IPPROTO_UDP = 17
 
 # BPF map key structures (must match BPF program)
 class ConnKeyV4(ctypes.Structure):
@@ -123,7 +122,7 @@ class ConnectionLogger:
         if self._bpf_obj:
             self._bpf_obj.__exit__(None, None, None)
 
-    def lookup_pid(self, dst_ip: str, src_port: int, dst_port: int, protocol: int = IPPROTO_TCP) -> int | None:
+    def lookup_pid(self, dst_ip: str, src_port: int, dst_port: int) -> int | None:
         """Look up PID for a connection tuple."""
         try:
             addr = ipaddress.ip_address(dst_ip)
@@ -135,7 +134,7 @@ class ConnectionLogger:
                 dst_ip=socket.htonl(int(addr)),
                 src_port=src_port,
                 dst_port=dst_port,
-                protocol=protocol,
+                protocol=IPPROTO_TCP,
             )
             return self._map_v4.get(key) if self._map_v4 else None
         else:
@@ -150,7 +149,7 @@ class ConnectionLogger:
                 dst_ip=ip_ints,
                 src_port=src_port,
                 dst_port=dst_port,
-                protocol=protocol,
+                protocol=IPPROTO_TCP,
             )
             return self._map_v6.get(key) if self._map_v6 else None
 
@@ -179,24 +178,9 @@ class ConnectionLogger:
         else:
             logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} pid=?")
 
-    def dns_request(self, flow: dns.DNSFlow) -> None:
-        # DNS query
-        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
-        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
-
-        # Get query name from first question
-        query_name = flow.request.questions[0].name if flow.request.questions else "?"
-
-        pid = self.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
-        if pid:
-            comm = get_comm(pid)
-            logger.info(f"DNS src_port={src_port} dst={dst_ip}:{dst_port} name={query_name} pid={pid} comm={comm}")
-        else:
-            logger.info(f"DNS src_port={src_port} dst={dst_ip}:{dst_port} name={query_name} pid=?")
-
 
 addons = [ConnectionLogger()]
 
 if __name__ == "__main__":
     from mitmproxy.tools.main import mitmdump
-    mitmdump(["-s", __file__, "--mode", "transparent", "--mode", "dns@8053", "--showhost", "--set", "block_global=false"])
+    mitmdump(["-s", __file__, "--mode", "transparent", "--showhost", "--set", "block_global=false"])
