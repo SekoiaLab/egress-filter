@@ -26,7 +26,7 @@ jobs:
           log "✓ wireguard-tools installed"
 
           log "Installing mitmproxy..."
-          sudo pip install mitmproxy --break-system-packages
+          sudo pip install mitmproxy --break-system-packages --ignore-installed
           log "✓ mitmproxy installed"
 
           # Verify it's accessible system-wide
