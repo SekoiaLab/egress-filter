@@ -47,14 +47,21 @@ jobs:
 
       - name: Start mitmproxy
         run: |
+          # Create log file with proper permissions
+          touch /tmp/mitmproxy.log
+          chmod 666 /tmp/mitmproxy.log
+
           # Start mitmproxy as dedicated user using the pre-installed venv
-          sudo -i -u mitmproxy-user /home/mitmproxy-user/venv/bin/mitmdump \
+          # Note: nohup and explicit output redirection to ensure logs are captured
+          sudo -i -u mitmproxy-user bash -c '/home/mitmproxy-user/venv/bin/mitmdump \
             --mode wireguard \
             --set block_global=false \
             -s /home/mitmproxy-user/mitmproxy_wg_logger.py \
-            > /tmp/mitmproxy.log 2>&1 &
+            >> /tmp/mitmproxy.log 2>&1' &
 
-          echo "MITMPROXY_PID=$!" >> $GITHUB_ENV
+          MITMPROXY_PID=$!
+          echo "MITMPROXY_PID=$MITMPROXY_PID" >> $GITHUB_ENV
+          echo "Started mitmproxy wrapper with PID $MITMPROXY_PID"
 
           # Wait for mitmproxy to start
           echo "Waiting for mitmproxy to start..."
@@ -63,9 +70,16 @@ jobs:
               echo "mitmproxy started"
               break
             fi
+            # Check if the process is still running
+            if ! ps -p $MITMPROXY_PID > /dev/null 2>&1; then
+              echo "ERROR: mitmproxy process died"
+              cat /tmp/mitmproxy.log
+              exit 1
+            fi
             sleep 1
           done
 
+          echo "=== mitmproxy log at startup ==="
           cat /tmp/mitmproxy.log
 
       - name: Extract and setup WireGuard client
