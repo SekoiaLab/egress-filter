@@ -8,7 +8,7 @@
 import json
 import logging
 import os
-from mitmproxy import http, ctx
+from mitmproxy import http, tcp, ctx
 
 # Mitmproxy debug log (separate file, configure first)
 MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
@@ -45,10 +45,31 @@ class ConnectionLogger:
         logger.info(f"Proxy started in transparent mode, logging to {LOG_FILE}")
 
     def request(self, flow: http.HTTPFlow) -> None:
-        logger.info(f"REQUEST: {flow.request.method} {flow.request.pretty_url}")
+        # HTTP/HTTPS request (same handler for both)
+        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
+        url = flow.request.pretty_url
+        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url}")
 
     def response(self, flow: http.HTTPFlow) -> None:
-        logger.info(f"RESPONSE: {flow.request.method} {flow.request.pretty_url} -> {flow.response.status_code}")
+        # Log response status
+        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
+        url = flow.request.pretty_url
+        status = flow.response.status_code
+        logger.info(f"HTTP src_port={src_port} dst={dst_ip}:{dst_port} url={url} status={status}")
+
+    def tcp_start(self, flow: tcp.TCPFlow) -> None:
+        # Non-HTTP TCP connection started
+        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
+        logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} event=start")
+
+    def tcp_end(self, flow: tcp.TCPFlow) -> None:
+        # Non-HTTP TCP connection ended
+        src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
+        dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
+        logger.info(f"TCP src_port={src_port} dst={dst_ip}:{dst_port} event=end")
 
 
 addons = [ConnectionLogger()]
