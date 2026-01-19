@@ -78,9 +78,14 @@ jobs:
 
           sudo pkill -f mitmdump || true
 
-      - name: Test 4 - WireGuard setup and DNS routing
+      - name: Test 4 - WireGuard with DNS bypass routes
         run: |
           VENV_BIN=$(dirname $(uv python find))
+
+          # Get default gateway before WireGuard
+          DEFAULT_GW=$(ip route | grep default | awk '{print $3}')
+          DEFAULT_IF=$(ip route | grep default | awk '{print $5}')
+          echo "Default gateway: $DEFAULT_GW via $DEFAULT_IF"
 
           echo "=== Starting mitmproxy ==="
           sudo env PYTHONUNBUFFERED=1 $VENV_BIN/mitmdump \
@@ -96,15 +101,12 @@ jobs:
 
           cat /tmp/wg-full.log
 
-          echo ""
-          echo "=== Extract and setup WireGuard ==="
           # Extract config
           python3 << 'EOF'
           import re
           with open("/tmp/wg-full.log") as f:
               content = f.read()
 
-          # Find config section
           config = []
           in_config = False
           for line in content.split('\n'):
@@ -123,45 +125,32 @@ jobs:
                       config.append('')
                       config.append('[Peer]')
 
-          print('\n'.join(config))
           with open('/tmp/wg.conf', 'w') as f:
               f.write('\n'.join(config))
           EOF
 
-          echo ""
-          echo "=== WireGuard config ==="
-          cat /tmp/wg.conf
-
-          echo ""
-          echo "=== DNS config BEFORE WireGuard ==="
-          cat /etc/resolv.conf
-
-          echo ""
-          echo "=== Setup WireGuard interface ==="
+          echo "=== Setup WireGuard ==="
           sudo cp /tmp/wg.conf /etc/wireguard/wg0.conf
           sudo wg-quick up wg0
 
           echo ""
-          echo "=== DNS config AFTER WireGuard ==="
-          cat /etc/resolv.conf
+          echo "=== Add bypass routes for upstream DNS servers ==="
+          # Add explicit routes to bypass WireGuard for DNS servers
+          sudo ip route add 8.8.8.8/32 via $DEFAULT_GW dev $DEFAULT_IF
+          sudo ip route add 8.8.4.4/32 via $DEFAULT_GW dev $DEFAULT_IF
+          sudo ip route add 1.1.1.1/32 via $DEFAULT_GW dev $DEFAULT_IF
 
           echo ""
-          echo "=== WireGuard status ==="
-          sudo wg show
-
-          echo ""
-          echo "=== Routing after WireGuard ==="
+          echo "=== Routing table after bypass routes ==="
           ip route
-          ip rule list
 
           echo ""
-          echo "=== Test DNS through WireGuard tunnel ==="
-          # The DNS server should be 10.0.0.53 (mitmproxy's internal DNS)
-          dig @10.0.0.53 example.com || echo "DNS to 10.0.0.53 failed"
+          echo "=== Test DNS through mitmproxy (10.0.0.53) ==="
+          dig @10.0.0.53 example.com +short +timeout=5 || echo "DNS via mitmproxy failed"
 
           echo ""
-          echo "=== Test direct DNS (should bypass WireGuard due to fwmark) ==="
-          dig @8.8.8.8 example.com || echo "Direct DNS failed"
+          echo "=== Test direct DNS to 8.8.8.8 (bypassed) ==="
+          dig @8.8.8.8 example.com +short +timeout=5 || echo "Direct DNS failed"
 
           echo ""
           echo "=== mitmproxy logs ==="
