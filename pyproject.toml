@@ -1,0 +1,13 @@
+[project]
+name = "egress-filter"
+version = "0.1.0"
+description = "eBPF-based connection-to-PID tracker for egress firewall"
+requires-python = ">=3.12"
+dependencies = ["tinybpf @ git+https://github.com/gregclermont/tinybpf.git"]
+
+[[tool.uv.index]]
+name = "tinybpf"
+url = "https://gregclermont.github.io/tinybpf"
+
+[tool.uv]
+environments = ["sys_platform == 'linux'"]

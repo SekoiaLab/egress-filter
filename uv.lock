@@ -1,0 +1,25 @@
+version = 1
+revision = 3
+requires-python = ">=3.12"
+resolution-markers = [
+    "sys_platform == 'linux'",
+]
+supported-markers = [
+    "sys_platform == 'linux'",
+]
+
+[[package]]
+name = "egress-filter"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "tinybpf", marker = "sys_platform == 'linux'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tinybpf", git = "https://github.com/gregclermont/tinybpf.git" }]
+
+[[package]]
+name = "tinybpf"
+version = "0.0.1"
+source = { git = "https://github.com/gregclermont/tinybpf.git#c952cc8e084f5fe14fcd55de7a688eba20322842" }

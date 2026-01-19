@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""
+eBPF-based connection-to-PID tracker for egress firewall.
+
+Loads port_tracker BPF programs and provides lookup of PIDs by connection tuple.
+"""
+
+import argparse
+import ctypes
+import ipaddress
+import signal
+import socket
+import sys
+import time
+from pathlib import Path
+
+import tinybpf
+
+IPPROTO_TCP = 6
+IPPROTO_UDP = 17
+
+BPF_PATH = Path(__file__).parent / "src" / "bpf" / "port_tracker.bpf.o"
+DEFAULT_CGROUP = "/sys/fs/cgroup"
+
+
+class ConnKeyV4(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("dst_ip", ctypes.c_uint32),
+        ("src_port", ctypes.c_uint16),
+        ("dst_port", ctypes.c_uint16),
+        ("protocol", ctypes.c_uint8),
+        ("pad", ctypes.c_uint8 * 3),
+    ]
+
+
+class ConnKeyV6(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("dst_ip", ctypes.c_uint32 * 4),
+        ("src_port", ctypes.c_uint16),
+        ("dst_port", ctypes.c_uint16),
+        ("protocol", ctypes.c_uint8),
+        ("pad", ctypes.c_uint8 * 3),
+    ]
+
+
+class ConnInfo(ctypes.Structure):
+    _fields_ = [
+        ("pid", ctypes.c_uint32),
+        ("_pad", ctypes.c_uint32),
+        ("timestamp_ns", ctypes.c_uint64),
+        ("comm", ctypes.c_char * 16),
+    ]
+
+
+def ip_to_int(ip_str: str) -> int | tuple[int, int, int, int]:
+    """Convert IP string to integer(s) for map lookup."""
+    addr = ipaddress.ip_address(ip_str)
+    if isinstance(addr, ipaddress.IPv4Address):
+        return socket.htonl(int(addr))
+    else:
+        packed = addr.packed
+        return (
+            int.from_bytes(packed[0:4], "big"),
+            int.from_bytes(packed[4:8], "big"),
+            int.from_bytes(packed[8:12], "big"),
+            int.from_bytes(packed[12:16], "big"),
+        )
+
+
+def format_ipv4(ip_int: int) -> str:
+    """Format integer IP to dotted string."""
+    ip_host = socket.ntohl(ip_int)
+    return str(ipaddress.IPv4Address(ip_host))
+
+
+def format_ipv6(ip_ints: tuple[int, int, int, int]) -> str:
+    """Format IPv6 address from 4 32-bit ints."""
+    packed = b"".join(i.to_bytes(4, "big") for i in ip_ints)
+    return str(ipaddress.IPv6Address(packed))
+
+
+def protocol_name(proto: int) -> str:
+    return "TCP" if proto == IPPROTO_TCP else "UDP" if proto == IPPROTO_UDP else str(proto)
+
+
+class ConnectionTracker:
+    """Manages BPF programs and provides connection-to-PID lookups."""
+
+    def __init__(self, bpf_path: Path, cgroup_path: str):
+        self.bpf_path = bpf_path
+        self.cgroup_path = cgroup_path
+        self._obj = None
+        self._map_v4 = None
+        self._map_v6 = None
+
+    def __enter__(self):
+        self._obj = tinybpf.load(str(self.bpf_path))
+        self._obj.__enter__()
+
+        self._obj.program("handle_sockops").attach_cgroup(self.cgroup_path)
+        self._obj.program("handle_sendmsg4").attach_cgroup(self.cgroup_path)
+        self._obj.program("handle_sendmsg6").attach_cgroup(self.cgroup_path)
+
+        self._map_v4 = self._obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ConnInfo)
+        self._map_v6 = self._obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=ConnInfo)
+
+        return self
+
+    def __exit__(self, *args):
+        if self._obj:
+            self._obj.__exit__(*args)
+
+    def lookup(
+        self, dst_ip: str, src_port: int, dst_port: int, protocol: int = IPPROTO_TCP
+    ) -> ConnInfo | None:
+        """Look up PID info for a connection tuple."""
+        addr = ipaddress.ip_address(dst_ip)
+
+        if isinstance(addr, ipaddress.IPv4Address):
+            key = ConnKeyV4(
+                dst_ip=socket.htonl(int(addr)),
+                src_port=src_port,
+                dst_port=dst_port,
+                protocol=protocol,
+            )
+            return self._map_v4.get(key)
+        else:
+            packed = addr.packed
+            ip_ints = (ctypes.c_uint32 * 4)(
+                int.from_bytes(packed[0:4], "big"),
+                int.from_bytes(packed[4:8], "big"),
+                int.from_bytes(packed[8:12], "big"),
+                int.from_bytes(packed[12:16], "big"),
+            )
+            key = ConnKeyV6(
+                dst_ip=ip_ints,
+                src_port=src_port,
+                dst_port=dst_port,
+                protocol=protocol,
+            )
+            return self._map_v6.get(key)
+
+    def dump_all(self):
+        """Print all tracked connections."""
+        print("IPv4 connections:")
+        for key, info in self._map_v4.items():
+            comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
+            print(
+                f"  {format_ipv4(key.dst_ip)}:{key.dst_port} <- :{key.src_port} "
+                f"[{protocol_name(key.protocol)}] PID={info.pid} ({comm})"
+            )
+
+        print("\nIPv6 connections:")
+        for key, info in self._map_v6.items():
+            comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
+            ip_tuple = tuple(key.dst_ip[i] for i in range(4))
+            print(
+                f"  [{format_ipv6(ip_tuple)}]:{key.dst_port} <- :{key.src_port} "
+                f"[{protocol_name(key.protocol)}] PID={info.pid} ({comm})"
+            )
+
+
+def cmd_run(args):
+    """Run the tracker and periodically dump connections."""
+    print(f"Loading BPF from {args.bpf}")
+    print(f"Attaching to cgroup {args.cgroup}")
+
+    running = True
+
+    def handle_signal(sig, frame):
+        nonlocal running
+        print("\nShutting down...")
+        running = False
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    with ConnectionTracker(Path(args.bpf), args.cgroup) as tracker:
+        print("Tracker active. Press Ctrl+C to stop.\n")
+        while running:
+            tracker.dump_all()
+            print()
+            time.sleep(args.interval)
+
+
+def cmd_lookup(args):
+    """Look up a single connection."""
+    protocol = IPPROTO_TCP if args.protocol.lower() == "tcp" else IPPROTO_UDP
+
+    with ConnectionTracker(Path(args.bpf), args.cgroup) as tracker:
+        info = tracker.lookup(args.dst_ip, args.src_port, args.dst_port, protocol)
+        if info:
+            comm = info.comm.decode("utf-8", errors="replace").rstrip("\x00")
+            print(f"PID: {info.pid}")
+            print(f"Command: {comm}")
+            print(f"Timestamp: {info.timestamp_ns}")
+        else:
+            print("Connection not found in tracker")
+            sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="eBPF connection-to-PID tracker")
+    parser.add_argument(
+        "--bpf", default=str(BPF_PATH), help="Path to compiled BPF object"
+    )
+    parser.add_argument(
+        "--cgroup", default=DEFAULT_CGROUP, help="Cgroup v2 path to attach to"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="Run tracker and dump connections")
+    run_parser.add_argument(
+        "--interval", type=float, default=2.0, help="Dump interval in seconds"
+    )
+    run_parser.set_defaults(func=cmd_run)
+
+    lookup_parser = subparsers.add_parser("lookup", help="Look up a single connection")
+    lookup_parser.add_argument("dst_ip", help="Destination IP address")
+    lookup_parser.add_argument("src_port", type=int, help="Source port")
+    lookup_parser.add_argument("dst_port", type=int, help="Destination port")
+    lookup_parser.add_argument(
+        "--protocol", "-p", default="tcp", choices=["tcp", "udp"], help="Protocol"
+    )
+    lookup_parser.set_defaults(func=cmd_lookup)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

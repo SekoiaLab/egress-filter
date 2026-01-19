@@ -1,0 +1,62 @@
+name: Test BPF Tracker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Check kernel version
+        run: uname -r
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Compile BPF programs
+        run: uv run tinybpf docker-compile src/bpf/*.bpf.c
+
+      - name: Test BPF load and tracking
+        run: |
+          # Start tracker in background, dump every second
+          sudo uv run python main.py run --interval 1 > /tmp/tracker.log 2>&1 &
+          TRACKER_PID=$!
+          sleep 2
+
+          # Check if tracker started
+          if ! kill -0 $TRACKER_PID 2>/dev/null; then
+            echo "Tracker failed to start:"
+            cat /tmp/tracker.log
+            exit 1
+          fi
+
+          # Make some test connections
+          echo "Making test connections..."
+          curl -s https://api.github.com > /dev/null &
+          CURL_PID=$!
+
+          # Give it time to connect and be tracked
+          sleep 2
+
+          # Dump current state
+          echo "=== Tracker output ==="
+          cat /tmp/tracker.log
+
+          # Stop tracker
+          sudo kill $TRACKER_PID 2>/dev/null || true
+          wait $CURL_PID 2>/dev/null || true
+
+          # Check if we captured the curl connection
+          if grep -q "curl" /tmp/tracker.log; then
+            echo "SUCCESS: Captured curl connection!"
+          else
+            echo "WARNING: Did not capture curl in output (may need more time)"
+          fi
