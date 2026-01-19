@@ -37,14 +37,20 @@ jobs:
           echo "Site packages: $SITE_PACKAGES"
 
           # Quick test that BPF loads
-          sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON -c "
-import main  # This will init libbpf
-import tinybpf
-print('tinybpf loaded, version:', tinybpf.version())
-obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
-print('BPF object loaded')
-print('Programs:', list(obj.programs.keys()))
-"
+          cat > /tmp/test_load.py << 'PYEOF'
+          import sys, os
+          # Add site-packages from env var
+          if 'SITE_PACKAGES' in os.environ:
+              sys.path.insert(0, os.environ['SITE_PACKAGES'])
+          import main  # This will init libbpf
+          import tinybpf
+          print('tinybpf loaded, version:', tinybpf.version())
+          obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
+          print('BPF object loaded')
+          print('Programs:', list(obj.programs.keys()))
+          PYEOF
+
+          sudo env SITE_PACKAGES="$SITE_PACKAGES" $PYTHON /tmp/test_load.py
 
           # Run tracker in background
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
