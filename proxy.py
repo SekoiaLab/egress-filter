@@ -18,11 +18,14 @@ from pathlib import Path
 from mitmproxy import http, tcp, ctx
 import tinybpf
 
-# Initialize tinybpf with system libbpf
-for libbpf_path in ["/usr/lib/x86_64-linux-gnu/libbpf.so.1", "/usr/lib/libbpf.so.1"]:
-    if Path(libbpf_path).exists():
-        tinybpf.init(libbpf_path)
-        break
+# Initialize tinybpf with system libbpf (guard against double-init when loaded as addon)
+try:
+    for libbpf_path in ["/usr/lib/x86_64-linux-gnu/libbpf.so.1", "/usr/lib/libbpf.so.1"]:
+        if Path(libbpf_path).exists():
+            tinybpf.init(libbpf_path)
+            break
+except RuntimeError:
+    pass  # Already initialized
 
 IPPROTO_TCP = 6
 

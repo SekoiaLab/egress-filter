@@ -42,7 +42,7 @@ jobs:
           # Start proxy as root (needed for BPF), exclude root's traffic via iptables
           echo "Starting proxy..."
           sudo env PROXY_LOG_FILE=/tmp/proxy.log \
-            $(pwd)/.venv/bin/python proxy.py &
+            $(pwd)/.venv/bin/python proxy.py > /tmp/proxy-stdout.log 2>&1 &
           PROXY_PID=$!
 
           # Wait for proxy to generate CA certificate (root's home = /root)
@@ -50,6 +50,12 @@ jobs:
           while [ ! -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; do
             sleep 1
             counter=$((counter+1))
+            # Check if proxy process died
+            if ! sudo kill -0 $PROXY_PID 2>/dev/null; then
+              echo "Proxy process died! Output:"
+              cat /tmp/proxy-stdout.log || true
+              exit 1
+            fi
             if [ $counter -gt 120 ]; then
               echo "Timeout waiting for certificate"
               exit 1
@@ -105,6 +111,9 @@ jobs:
           echo "=== Proxy Log (custom) ==="
           cat /tmp/proxy.log || echo "No log file found"
           echo ""
+          echo "=== Proxy stdout/stderr ==="
+          cat /tmp/proxy-stdout.log || echo "No log file found"
+          echo ""
           echo "=== Mitmproxy Log (debug) ==="
           cat /tmp/mitmproxy.log || echo "No log file found"
 
@@ -115,5 +124,6 @@ jobs:
           name: proxy-logs
           path: |
             /tmp/proxy.log
+            /tmp/proxy-stdout.log
             /tmp/mitmproxy.log
           if-no-files-found: warn
