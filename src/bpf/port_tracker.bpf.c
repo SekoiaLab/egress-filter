@@ -143,7 +143,11 @@ int handle_sockops(struct bpf_sock_ops *skops) {
             .dst_port = dst_port,
             .protocol = IPPROTO_TCP,
         };
-        __builtin_memcpy(key.dst_ip, skops->remote_ip6, 16);
+        // Copy fields individually to satisfy verifier
+        key.dst_ip[0] = skops->remote_ip6[0];
+        key.dst_ip[1] = skops->remote_ip6[1];
+        key.dst_ip[2] = skops->remote_ip6[2];
+        key.dst_ip[3] = skops->remote_ip6[3];
 
         struct conn_info info = {};
         fill_conn_info(&info);
@@ -217,7 +221,11 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
         .dst_port = bpf_ntohs(ctx->user_port),
         .protocol = IPPROTO_UDP,
     };
-    __builtin_memcpy(key.dst_ip, ctx->user_ip6, 16);
+    // Copy fields individually to satisfy verifier
+    key.dst_ip[0] = ctx->user_ip6[0];
+    key.dst_ip[1] = ctx->user_ip6[1];
+    key.dst_ip[2] = ctx->user_ip6[2];
+    key.dst_ip[3] = ctx->user_ip6[3];
     bpf_map_update_elem(&conn_to_pid_v6, &key, &info, BPF_ANY);
     return 1;
 }
