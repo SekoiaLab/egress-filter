@@ -122,8 +122,8 @@ class ConnectionTracker:
         self._links.append(self._obj.program("handle_sendmsg4").attach_cgroup(self.cgroup_path))
         self._links.append(self._obj.program("handle_sendmsg6").attach_cgroup(self.cgroup_path))
 
-        self._map_v4 = self._obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ctypes.c_uint32)
-        self._map_v6 = self._obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=ctypes.c_uint32)
+        self._map_v4 = self._obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
+        self._map_v6 = self._obj.maps["conn_to_pid_v6"].typed(key=ConnKeyV6, value=int)
 
         return self
 
@@ -212,7 +212,7 @@ def cmd_lookup(args):
 
     with ConnectionTracker(Path(args.bpf), args.cgroup) as tracker:
         pid = tracker.lookup(args.dst_ip, args.src_port, args.dst_port, protocol)
-        if pid:
+        if pid is not None:
             print(f"PID: {pid}")
             print(f"Command: {get_comm(pid)}")
         else:

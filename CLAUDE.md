@@ -92,8 +92,8 @@ with tinybpf.load("port_tracker.bpf.o") as obj:
     obj.program("handle_sendmsg4").attach_cgroup("/sys/fs/cgroup")
     obj.program("handle_sendmsg6").attach_cgroup("/sys/fs/cgroup")
 
-    # Typed map access
-    map_v4 = obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=ctypes.c_uint32)
+    # Typed map access (use int for simple u32 values)
+    map_v4 = obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
     for key, pid in map_v4.items():
         print(f"{key.src_port} -> {key.dst_ip}:{key.dst_port} = PID {pid}")
 ```
@@ -125,5 +125,5 @@ class ConnKeyV6(ctypes.Structure):
         ("pad", ctypes.c_uint8 * 3),
     ]
 
-# Map value is just ctypes.c_uint32 (the PID)
+# Map value is u32 (the PID) - use value=int with typed()
 ```
