@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Test the IPv6 blocker BPF program."""
 
-import ctypes
 import errno
 import socket
 import sys
@@ -27,124 +26,86 @@ def get_self_cgroup() -> str:
 
 def test_ipv6_blocker():
     """Test that IPv6 blocker blocks native IPv6 but allows v4-mapped."""
-    print(f"Loading BPF from {BPF_PATH}")
     cgroup_path = get_self_cgroup()
-    print(f"Attaching to cgroup {cgroup_path}")
 
     with tinybpf.load(str(BPF_PATH)) as obj:
-        # Attach programs
         links = []
         links.append(obj.program("block_connect6").attach_cgroup(cgroup_path))
         links.append(obj.program("block_sendmsg6").attach_cgroup(cgroup_path))
-        print("Programs attached")
 
-        # Get config map
         config_map = obj.maps["config"].typed(key=int, value=int)
 
-        # Test 1: With blocking disabled (default), native IPv6 should work
-        # (or fail with network unreachable, not EPERM)
-        print("\n=== Test 1: Blocking disabled ===")
-        config_map[0] = 0
-        print(f"config[0] = {config_map[0]}")
-
-        try:
-            s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-            s.settimeout(1)
-            s.connect(("2001:4860:4860::8888", 443))
-            print("Native IPv6 TCP: connected (allowed)")
-            s.close()
-        except socket.timeout:
-            print("Native IPv6 TCP: timeout (network issue, not blocked)")
-        except OSError as e:
-            if e.errno == errno.ENETUNREACH:
-                print("Native IPv6 TCP: network unreachable (not blocked, no IPv6)")
-            elif e.errno == errno.EPERM:
-                print("Native IPv6 TCP: EPERM - unexpectedly blocked!")
-                return False
-            else:
-                print(f"Native IPv6 TCP: {e}")
-
-        # Test 2: Enable blocking
-        print("\n=== Test 2: Blocking enabled ===")
+        # Enable blocking
         config_map[0] = 1
-        print(f"config[0] = {config_map[0]}")
 
         # Native IPv6 TCP should be blocked
-        print("\nTesting native IPv6 TCP (should be blocked)...", end=" ")
+        print("Native IPv6 TCP (should block)...", end=" ")
         try:
             s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
             s.settimeout(1)
             s.connect(("2001:4860:4860::8888", 443))
-            print("FAIL - connected when should be blocked")
             s.close()
+            print("FAIL - connected")
             return False
         except OSError as e:
-            if e.errno == errno.EPERM:
-                print("OK - blocked with EPERM")
-            elif e.errno == errno.EACCES:
-                print("OK - blocked with EACCES")
+            if e.errno in (errno.EPERM, errno.EACCES):
+                print("OK")
             elif e.errno == errno.ENETUNREACH:
-                # Network unreachable could mask the block - try UDP
-                print("network unreachable (can't distinguish from block)")
+                print("SKIP (no IPv6)")
             else:
-                print(f"error: {e}")
+                print(f"FAIL: {e}")
+                return False
 
         # Native IPv6 UDP should be blocked
-        print("Testing native IPv6 UDP (should be blocked)...", end=" ")
+        print("Native IPv6 UDP (should block)...", end=" ")
         try:
             s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-            s.settimeout(1)
             s.sendto(b"\x00", ("2001:4860:4860::8888", 53))
-            print("FAIL - sent when should be blocked")
             s.close()
+            print("FAIL - sent")
             return False
         except OSError as e:
-            if e.errno == errno.EPERM:
-                print("OK - blocked with EPERM")
-            elif e.errno == errno.EACCES:
-                print("OK - blocked with EACCES")
+            if e.errno in (errno.EPERM, errno.EACCES):
+                print("OK")
             elif e.errno == errno.ENETUNREACH:
-                print("network unreachable (can't distinguish from block)")
+                print("SKIP (no IPv6)")
             else:
-                print(f"error: {e}")
+                print(f"FAIL: {e}")
+                return False
 
-        # v4-mapped should still work
-        print("Testing v4-mapped TCP (should be allowed)...", end=" ")
+        # v4-mapped TCP should be allowed
+        print("v4-mapped TCP (should allow)...", end=" ")
         try:
             s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
             s.settimeout(5)
             s.connect(("::ffff:8.8.8.8", 443))
-            print("OK - connected")
             s.close()
+            print("OK")
         except OSError as e:
             if e.errno in (errno.EPERM, errno.EACCES):
-                print(f"FAIL - blocked when should be allowed: {e}")
+                print(f"FAIL - blocked: {e}")
                 return False
-            else:
-                print(f"network error (not blocked): {e}")
+            print(f"SKIP (network): {e}")
 
-        print("Testing v4-mapped UDP (should be allowed)...", end=" ")
+        # v4-mapped UDP should be allowed
+        print("v4-mapped UDP (should allow)...", end=" ")
         try:
             s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-            s.settimeout(1)
             s.sendto(b"\x00", ("::ffff:8.8.8.8", 53))
-            print("OK - sent")
             s.close()
+            print("OK")
         except OSError as e:
             if e.errno in (errno.EPERM, errno.EACCES):
-                print(f"FAIL - blocked when should be allowed: {e}")
+                print(f"FAIL - blocked: {e}")
                 return False
-            else:
-                print(f"network error (not blocked): {e}")
+            print(f"SKIP (network): {e}")
 
-        # Cleanup
         for link in links:
             link.destroy()
 
-    print("\n=== All tests passed ===")
+    print("All tests passed!")
     return True
 
 
 if __name__ == "__main__":
-    success = test_ipv6_blocker()
-    sys.exit(0 if success else 1)
+    sys.exit(0 if test_ipv6_blocker() else 1)

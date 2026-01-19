@@ -15,14 +15,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Check kernel version
-        run: uname -r
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libbpf-dev linux-tools-common linux-tools-$(uname -r) || \
-            sudo apt-get install -y libbpf-dev linux-tools-common
+          sudo apt-get install -y libbpf-dev
 
       - name: Install dependencies
         run: uv sync
@@ -30,72 +26,29 @@ jobs:
       - name: Compile BPF programs
         run: uv run tinybpf docker-compile src/bpf/*.bpf.c
 
-      - name: Test BPF load and tracking
+      - name: Test connection tracker
         run: |
           PYTHON=$(uv python find)
           SITE_PACKAGES=$(dirname $PYTHON)/../lib/python3.12/site-packages
 
-          # Show cgroup info
-          echo "=== Process cgroup ==="
-          cat /proc/self/cgroup
-
-          # Check IPv6 connectivity
-          echo "=== IPv6 connectivity ==="
-          curl -6 -s --max-time 3 http://example.com > /dev/null && echo "IPv6: available" || echo "IPv6: not available"
-
-          # Run tracker in background (now auto-detects cgroup)
-          echo "=== Starting tracker ==="
+          # Run tracker in background
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
-            $PYTHON main.py run --interval 1 2>&1 | tee /tmp/tracker.log &
-          TRACKER_PID=$!
+            $PYTHON main.py run --interval 1 > /tmp/tracker.log 2>&1 &
           sleep 2
 
-          # Verify BPF programs loaded
-          echo "=== Loaded BPF programs ==="
-          sudo bpftool prog list | grep -E "handle_sockops|handle_sendmsg" || true
-
-          # Check cgroup attachment
-          CGROUP_PATH="/sys/fs/cgroup$(cat /proc/self/cgroup | cut -d: -f3)"
-          echo "=== Cgroup attachments at $CGROUP_PATH ==="
-          sudo bpftool cgroup show "$CGROUP_PATH" 2>/dev/null || true
-
-          # Make test connections (exercises all code paths)
-          echo "=== Making test connections ==="
+          # Exercise all code paths
           python3 test_connections.py
-          sleep 2
+          sleep 1
 
-          # Check map contents
-          echo "=== IPv4 map contents ==="
-          MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v4 | awk '{print $1}' | tr -d ':')
-          if [ -n "$MAP_ID" ]; then
-            sudo bpftool map dump id $MAP_ID 2>&1 || true
-          fi
+          # Stop tracker
+          sudo pkill -f "main.py run" || true
 
-          echo "=== IPv6 map contents ==="
-          MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v6 | awk '{print $1}' | tr -d ':')
-          if [ -n "$MAP_ID" ]; then
-            sudo bpftool map dump id $MAP_ID 2>&1 || true
-          fi
-
-          # Show tracker output
-          echo "=== Tracker output ==="
+          # Verify connections were captured
           cat /tmp/tracker.log
-
-          # Cleanup
-          sudo kill $TRACKER_PID 2>/dev/null || true
-
-          # Check results
-          if grep -q "PID=" /tmp/tracker.log; then
-            echo "SUCCESS: Captured connections!"
-          else
-            echo "FAILED: No PIDs captured"
-            exit 1
-          fi
+          grep -q "PID=" /tmp/tracker.log || { echo "FAILED: No PIDs captured"; exit 1; }
 
       - name: Test IPv6 blocker
         run: |
           PYTHON=$(uv python find)
           SITE_PACKAGES=$(dirname $PYTHON)/../lib/python3.12/site-packages
-
-          echo "=== Testing IPv6 blocker ==="
           sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON test_ipv6_blocker.py
