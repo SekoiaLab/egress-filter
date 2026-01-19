@@ -83,12 +83,10 @@ static __always_inline void fill_conn_info(struct conn_info *info) {
     // Userspace can look up comm via /proc/[pid]/comm
 }
 
-static __always_inline bool is_v4_mapped(u32 *ip6) {
-    // ::ffff:x.x.x.x
-    return ip6[0] == 0 &&
-           ip6[1] == 0 &&
-           ip6[2] == bpf_htonl(0x0000ffff);
-}
+// Check if IPv6 address is v4-mapped (::ffff:x.x.x.x)
+// Must access context fields directly to satisfy verifier
+#define IS_V4_MAPPED(ip6_0, ip6_1, ip6_2) \
+    ((ip6_0) == 0 && (ip6_1) == 0 && (ip6_2) == bpf_htonl(0x0000ffff))
 
 // ============================================
 // TCP: sock_ops (IPv4 + IPv6)
@@ -125,7 +123,7 @@ int handle_sockops(struct bpf_sock_ops *skops) {
             return 1;
 
         // Check for v4-mapped address
-        if (is_v4_mapped(skops->remote_ip6)) {
+        if (IS_V4_MAPPED(skops->remote_ip6[0], skops->remote_ip6[1], skops->remote_ip6[2])) {
             // Treat as IPv4
             struct conn_key_v4 key = {
                 .dst_ip = skops->remote_ip6[3],
@@ -202,7 +200,7 @@ int handle_sendmsg6(struct bpf_sock_addr *ctx) {
     fill_conn_info(&info);
 
     // Check for IPv4-mapped address
-    if (is_v4_mapped(ctx->user_ip6)) {
+    if (IS_V4_MAPPED(ctx->user_ip6[0], ctx->user_ip6[1], ctx->user_ip6[2])) {
         struct conn_key_v4 key = {
             .dst_ip = ctx->user_ip6[3],
             .src_port = src_port,
