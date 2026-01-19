@@ -16,71 +16,90 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wireguard-tools resolvconf
+          sudo apt-get install -y wireguard-tools dnsutils
 
       - name: Install Python dependencies
         run: |
           uv sync
           uv pip install mitmproxy
 
-      - name: Start mitmproxy in WireGuard mode
+      - name: Setup network namespace for mitmproxy
         run: |
-          # Get the venv bin directory for mitmdump
+          # Create a network namespace for mitmproxy to avoid the host loop problem
+          # See: https://docs.mitmproxy.org/stable/concepts/modes/#limitations
+
+          # Create namespace
+          sudo ip netns add mitmproxy-ns
+
+          # Create veth pair to connect namespaces
+          sudo ip link add veth-host type veth peer name veth-mitm
+
+          # Move one end to the mitmproxy namespace
+          sudo ip link set veth-mitm netns mitmproxy-ns
+
+          # Configure the host side
+          sudo ip addr add 192.168.100.1/24 dev veth-host
+          sudo ip link set veth-host up
+
+          # Configure the mitmproxy namespace side
+          sudo ip netns exec mitmproxy-ns ip addr add 192.168.100.2/24 dev veth-mitm
+          sudo ip netns exec mitmproxy-ns ip link set veth-mitm up
+          sudo ip netns exec mitmproxy-ns ip link set lo up
+
+          # Add default route in mitmproxy namespace to go through host
+          sudo ip netns exec mitmproxy-ns ip route add default via 192.168.100.1
+
+          # Enable IP forwarding and NAT on host
+          sudo sysctl -w net.ipv4.ip_forward=1
+          sudo iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -o eth0 -j MASQUERADE
+          sudo iptables -A FORWARD -i veth-host -o eth0 -j ACCEPT
+          sudo iptables -A FORWARD -i eth0 -o veth-host -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+          # Test connectivity from namespace
+          echo "Testing namespace connectivity..."
+          sudo ip netns exec mitmproxy-ns ping -c 1 8.8.8.8 || echo "Ping failed (might be blocked)"
+
+      - name: Start mitmproxy in network namespace
+        run: |
           VENV_BIN=$(dirname $(uv python find))
 
-          # Start mitmproxy with our logging addon
-          # WireGuard config is printed to stderr, logs to stdout
-          # Note: dns_mode=transparent forwards DNS to original destination
-          sudo env PATH="$VENV_BIN:$PATH" \
+          # Start mitmproxy in the isolated namespace
+          sudo ip netns exec mitmproxy-ns env \
+            PATH="$VENV_BIN:$PATH" \
             PYTHONUNBUFFERED=1 \
             $VENV_BIN/mitmdump \
               --mode wireguard \
               --set block_global=false \
-              --set ssl_insecure=true \
               -s mitmproxy_wg_logger.py \
               > /tmp/mitmproxy.log 2>&1 &
-          MITMPROXY_PID=$!
-          echo "MITMPROXY_PID=$MITMPROXY_PID" >> $GITHUB_ENV
 
-          # Wait for mitmproxy to start and output config
+          echo "MITMPROXY_PID=$!" >> $GITHUB_ENV
+
+          # Wait for mitmproxy to start
           echo "Waiting for mitmproxy to start..."
           for i in {1..30}; do
-            if grep -q "\[Interface\]" /tmp/mitmproxy.log 2>/dev/null; then
+            if grep -q "WireGuard server listening" /tmp/mitmproxy.log 2>/dev/null; then
               echo "mitmproxy started"
               break
             fi
             sleep 1
           done
 
-          # Show mitmproxy output
-          cat /tmp/mitmproxy.log || true
-
-      - name: Extract WireGuard config
-        run: |
-          # Extract the WireGuard client config from mitmproxy output
-          # mitmproxy prints a WireGuard config with [Interface] and [Peer] sections
-
-          # Wait for config to be fully written
-          sleep 2
-          echo "=== Raw mitmproxy output ==="
           cat /tmp/mitmproxy.log
 
-          # Extract config using Python
+      - name: Extract and setup WireGuard client
+        run: |
+          # Extract WireGuard config from mitmproxy output
           python3 << 'PYEOF'
           import re
-          import sys
 
           with open("/tmp/mitmproxy.log", "r") as f:
               content = f.read()
 
-          # mitmproxy outputs the config starting with [Interface]
-          # Find lines from [Interface] onwards, stopping at empty line or EOF
-          lines = content.split('\n')
           config_lines = []
           in_config = False
 
-          for line in lines:
-              # Check for start of config
+          for line in content.split('\n'):
               if '[Interface]' in line:
                   in_config = True
                   config_lines.append('[Interface]')
@@ -89,131 +108,68 @@ jobs:
               if not in_config:
                   continue
 
-              # Check for [Peer] section
               if '[Peer]' in line:
                   config_lines.append('')
                   config_lines.append('[Peer]')
                   continue
 
-              # Empty line or new log message might end config
-              stripped = line.strip()
-              if not stripped:
-                  # Check if we have both Interface and Peer sections
-                  config_text = '\n'.join(config_lines)
-                  if '[Interface]' in config_text and '[Peer]' in config_text:
-                      break
-                  continue
+              if line.strip().startswith('---'):
+                  break
 
-              # Extract key = value from the line
-              # IMPORTANT: Skip DNS to prevent resolver loop (mitmproxy limitation)
-              # See: https://docs.mitmproxy.org/stable/concepts/modes/#limitations
-              if '=' in line:
-                  # Handle potential log prefixes (timestamps, etc)
-                  # Look for standard WireGuard keys (excluding DNS)
-                  for key in ['PrivateKey', 'Address', 'MTU', 'PublicKey', 'AllowedIPs', 'Endpoint']:
-                      if key in line:
-                          # Extract the value after the key
-                          match = re.search(rf'{key}\s*=\s*(.+)', line)
-                          if match:
-                              config_lines.append(f'{key} = {match.group(1).strip()}')
-                              break
+              # Extract keys (skip DNS to use system resolver)
+              for key in ['PrivateKey', 'Address', 'PublicKey', 'AllowedIPs', 'Endpoint']:
+                  if key in line and '=' in line:
+                      match = re.search(rf'{key}\s*=\s*(.+)', line)
+                      if match:
+                          value = match.group(1).strip()
+                          # Replace endpoint IP with the namespace IP
+                          if key == 'Endpoint':
+                              # mitmproxy's endpoint needs to be the namespace IP
+                              value = re.sub(r'^[\d.]+:', '192.168.100.2:', value)
+                          config_lines.append(f'{key} = {value}')
+                          break
 
           config = '\n'.join(config_lines)
-          print("=== Extracted config ===")
+          print("=== WireGuard client config ===")
           print(config)
-
-          if '[Interface]' not in config or '[Peer]' not in config:
-              print("\nERROR: Could not extract complete WireGuard config", file=sys.stderr)
-              sys.exit(1)
 
           with open("/tmp/wg-client.conf", "w") as f:
               f.write(config)
-          print("\nConfig saved to /tmp/wg-client.conf")
           PYEOF
 
-      - name: Setup WireGuard interface
-        run: |
-          # Show the config
-          echo "WireGuard client config:"
-          cat /tmp/wg-client.conf
+          # Setup WireGuard client on host
+          sudo cp /tmp/wg-client.conf /etc/wireguard/wg0.conf
+          sudo wg-quick up wg0
 
-          # Show DNS before WireGuard
-          echo "=== DNS config before WireGuard ==="
-          cat /etc/resolv.conf || true
-
-          # Bring up the WireGuard interface
-          sudo cp /tmp/wg-client.conf /etc/wireguard/wg-mitmproxy.conf
-          sudo wg-quick up wg-mitmproxy
-
-          # Show interface status
+          echo ""
+          echo "=== WireGuard status ==="
           sudo wg show
-
-          # Show routing
-          echo "=== Routing table ==="
-          ip route
-
-          # Show DNS after WireGuard
-          echo "=== DNS config after WireGuard ==="
-          cat /etc/resolv.conf || true
-
-          # Test DNS resolution from host (should use mitmproxy DNS)
-          echo "=== Testing DNS resolution ==="
-          nslookup example.com || echo "nslookup failed (expected)"
 
       - name: Run connection tests
         run: |
-          # Give WireGuard a moment to stabilize
           sleep 2
-
-          # Run the test script
           python3 test_mitmproxy_connections.py
-
-          # Give mitmproxy time to log everything
           sleep 3
 
       - name: Show mitmproxy logs
         if: always()
         run: |
           echo "=== mitmproxy logs ==="
-          cat /tmp/mitmproxy.log || echo "No mitmproxy logs found"
+          cat /tmp/mitmproxy.log || echo "No logs found"
 
       - name: Verify logged connections
         run: |
           echo "Checking for logged connections..."
 
-          # Check for HTTP (format: HTTP: METHOD URL -> STATUS)
-          if grep -q "HTTP:" /tmp/mitmproxy.log; then
-            echo "PASS: HTTP logged"
-            grep "HTTP:" /tmp/mitmproxy.log | head -5
-          else
-            echo "WARN: No HTTP found in logs"
-          fi
+          for pattern in "HTTP:" "DNS:" "TCP:" "UDP:"; do
+            if grep -q "$pattern" /tmp/mitmproxy.log; then
+              echo "PASS: $pattern found"
+              grep "$pattern" /tmp/mitmproxy.log | head -3
+            else
+              echo "WARN: $pattern not found"
+            fi
+          done
 
-          # Check for DNS (format: DNS: TYPE NAME -> RESULT)
-          if grep -q "DNS:" /tmp/mitmproxy.log; then
-            echo "PASS: DNS logged"
-            grep "DNS:" /tmp/mitmproxy.log | head -5
-          else
-            echo "WARN: No DNS found in logs"
-          fi
-
-          # Check for TCP (format: TCP: IP:PORT)
-          if grep -q "TCP:" /tmp/mitmproxy.log; then
-            echo "PASS: TCP logged"
-            grep "TCP:" /tmp/mitmproxy.log | head -5
-          else
-            echo "WARN: No raw TCP found in logs"
-          fi
-
-          # Check for UDP (format: UDP: IP:PORT)
-          if grep -q "UDP:" /tmp/mitmproxy.log; then
-            echo "PASS: UDP logged"
-            grep "UDP:" /tmp/mitmproxy.log | head -5
-          else
-            echo "WARN: No raw UDP found in logs"
-          fi
-
-          # At minimum, we should see some traffic
           if grep -qE "(HTTP|DNS|TCP|UDP):" /tmp/mitmproxy.log; then
             echo "SUCCESS: Traffic was logged through mitmproxy"
           else
@@ -224,5 +180,6 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          sudo wg-quick down wg-mitmproxy || true
+          sudo wg-quick down wg0 || true
+          sudo ip netns del mitmproxy-ns || true
           sudo pkill -f mitmdump || true
