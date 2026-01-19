@@ -43,13 +43,9 @@ jobs:
 
           # Start proxy as root (needed for BPF), exclude root's traffic via iptables
           echo "Starting proxy..."
+          MITMDUMP=$(dirname $PYTHON)/mitmdump
           sudo env PYTHONPATH="$PYTHONPATH" PROXY_LOG_FILE=/tmp/proxy.log \
-            $PYTHON -c "
-import sys
-sys.path.insert(0, '$SITE_PACKAGES')
-from mitmproxy.tools.main import mitmdump
-mitmdump(['-s', 'proxy.py', '--mode', 'transparent', '--showhost', '--set', 'block_global=false'])
-" &
+            $MITMDUMP -s proxy.py --mode transparent --showhost --set block_global=false &
           PROXY_PID=$!
 
           # Wait for proxy to generate CA certificate
