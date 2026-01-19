@@ -82,24 +82,28 @@ jobs:
 
           echo "Program IDs: sockops=$SOCKOPS_ID sendmsg4=$SENDMSG4_ID sendmsg6=$SENDMSG6_ID"
 
-          # Try manual bpftool attach
+          # Get the cgroup path for this process
+          CGROUP_PATH="/sys/fs/cgroup$(cat /proc/self/cgroup | cut -d: -f3)"
+          echo "Attaching to cgroup: $CGROUP_PATH"
+
+          # Try manual bpftool attach to the specific cgroup
           echo "=== Trying manual bpftool attach ==="
           if [ -n "$SOCKOPS_ID" ]; then
-            echo "Attaching sock_ops ($SOCKOPS_ID) to cgroup..."
-            sudo bpftool cgroup attach /sys/fs/cgroup sock_ops id $SOCKOPS_ID 2>&1 || echo "Failed to attach sock_ops"
+            echo "Attaching sock_ops ($SOCKOPS_ID) to $CGROUP_PATH..."
+            sudo bpftool cgroup attach "$CGROUP_PATH" sock_ops id $SOCKOPS_ID 2>&1 || echo "Failed to attach sock_ops"
           fi
           if [ -n "$SENDMSG4_ID" ]; then
-            echo "Attaching sendmsg4 ($SENDMSG4_ID) to cgroup..."
-            sudo bpftool cgroup attach /sys/fs/cgroup sendmsg4 id $SENDMSG4_ID 2>&1 || echo "Failed to attach sendmsg4"
+            echo "Attaching sendmsg4 ($SENDMSG4_ID) to $CGROUP_PATH..."
+            sudo bpftool cgroup attach "$CGROUP_PATH" sendmsg4 id $SENDMSG4_ID 2>&1 || echo "Failed to attach sendmsg4"
           fi
           if [ -n "$SENDMSG6_ID" ]; then
-            echo "Attaching sendmsg6 ($SENDMSG6_ID) to cgroup..."
-            sudo bpftool cgroup attach /sys/fs/cgroup sendmsg6 id $SENDMSG6_ID 2>&1 || echo "Failed to attach sendmsg6"
+            echo "Attaching sendmsg6 ($SENDMSG6_ID) to $CGROUP_PATH..."
+            sudo bpftool cgroup attach "$CGROUP_PATH" sendmsg6 id $SENDMSG6_ID 2>&1 || echo "Failed to attach sendmsg6"
           fi
 
           # Check what got attached
           echo "=== Cgroup attachments after manual attach ==="
-          sudo bpftool cgroup show /sys/fs/cgroup 2>/dev/null || true
+          sudo bpftool cgroup show "$CGROUP_PATH" 2>/dev/null || true
 
           # Make test connection
           echo "=== Making test connection ==="
