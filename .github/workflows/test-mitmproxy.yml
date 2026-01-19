@@ -1,0 +1,209 @@
+name: Test mitmproxy WireGuard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-mitmproxy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools resolvconf
+
+      - name: Install Python dependencies
+        run: |
+          uv sync
+          uv pip install mitmproxy
+
+      - name: Start mitmproxy in WireGuard mode
+        run: |
+          # Get the venv bin directory for mitmdump
+          VENV_BIN=$(dirname $(uv python find))
+
+          # Start mitmproxy with our logging addon
+          # WireGuard config is printed to stderr, logs to stdout
+          sudo env PATH="$VENV_BIN:$PATH" \
+            PYTHONUNBUFFERED=1 \
+            $VENV_BIN/mitmdump \
+              --mode wireguard \
+              --set block_global=false \
+              -s mitmproxy_wg_logger.py \
+              > /tmp/mitmproxy.log 2>&1 &
+          MITMPROXY_PID=$!
+          echo "MITMPROXY_PID=$MITMPROXY_PID" >> $GITHUB_ENV
+
+          # Wait for mitmproxy to start and output config
+          echo "Waiting for mitmproxy to start..."
+          for i in {1..30}; do
+            if grep -q "\[Interface\]" /tmp/mitmproxy.log 2>/dev/null; then
+              echo "mitmproxy started"
+              break
+            fi
+            sleep 1
+          done
+
+          # Show mitmproxy output
+          cat /tmp/mitmproxy.log || true
+
+      - name: Extract WireGuard config
+        run: |
+          # Extract the WireGuard client config from mitmproxy output
+          # mitmproxy prints a WireGuard config with [Interface] and [Peer] sections
+
+          # Wait for config to be fully written
+          sleep 2
+          echo "=== Raw mitmproxy output ==="
+          cat /tmp/mitmproxy.log
+
+          # Extract config using Python
+          python3 << 'PYEOF'
+          import re
+          import sys
+
+          with open("/tmp/mitmproxy.log", "r") as f:
+              content = f.read()
+
+          # mitmproxy outputs the config starting with [Interface]
+          # Find lines from [Interface] onwards, stopping at empty line or EOF
+          lines = content.split('\n')
+          config_lines = []
+          in_config = False
+
+          for line in lines:
+              # Check for start of config
+              if '[Interface]' in line:
+                  in_config = True
+                  config_lines.append('[Interface]')
+                  continue
+
+              if not in_config:
+                  continue
+
+              # Check for [Peer] section
+              if '[Peer]' in line:
+                  config_lines.append('')
+                  config_lines.append('[Peer]')
+                  continue
+
+              # Empty line or new log message might end config
+              stripped = line.strip()
+              if not stripped:
+                  # Check if we have both Interface and Peer sections
+                  config_text = '\n'.join(config_lines)
+                  if '[Interface]' in config_text and '[Peer]' in config_text:
+                      break
+                  continue
+
+              # Extract key = value from the line
+              if '=' in line:
+                  # Handle potential log prefixes (timestamps, etc)
+                  # Look for standard WireGuard keys
+                  for key in ['PrivateKey', 'Address', 'DNS', 'MTU', 'PublicKey', 'AllowedIPs', 'Endpoint']:
+                      if key in line:
+                          # Extract the value after the key
+                          match = re.search(rf'{key}\s*=\s*(.+)', line)
+                          if match:
+                              config_lines.append(f'{key} = {match.group(1).strip()}')
+                              break
+
+          config = '\n'.join(config_lines)
+          print("=== Extracted config ===")
+          print(config)
+
+          if '[Interface]' not in config or '[Peer]' not in config:
+              print("\nERROR: Could not extract complete WireGuard config", file=sys.stderr)
+              sys.exit(1)
+
+          with open("/tmp/wg-client.conf", "w") as f:
+              f.write(config)
+          print("\nConfig saved to /tmp/wg-client.conf")
+          PYEOF
+
+      - name: Setup WireGuard interface
+        run: |
+          # Show the config
+          echo "WireGuard client config:"
+          cat /tmp/wg-client.conf
+
+          # Bring up the WireGuard interface
+          sudo cp /tmp/wg-client.conf /etc/wireguard/wg-mitmproxy.conf
+          sudo wg-quick up wg-mitmproxy
+
+          # Show interface status
+          sudo wg show
+
+          # Show routing
+          ip route
+
+      - name: Run connection tests
+        run: |
+          # Give WireGuard a moment to stabilize
+          sleep 2
+
+          # Run the test script
+          python3 test_mitmproxy_connections.py
+
+          # Give mitmproxy time to log everything
+          sleep 3
+
+      - name: Show mitmproxy logs
+        if: always()
+        run: |
+          echo "=== mitmproxy logs ==="
+          cat /tmp/mitmproxy.log || echo "No mitmproxy logs found"
+
+      - name: Verify logged connections
+        run: |
+          echo "Checking for logged connections..."
+
+          # Check for HTTP requests
+          if grep -q "HTTP_REQUEST:" /tmp/mitmproxy.log; then
+            echo "PASS: HTTP requests logged"
+          else
+            echo "WARN: No HTTP requests found in logs"
+          fi
+
+          # Check for DNS requests
+          if grep -q "DNS_REQUEST:" /tmp/mitmproxy.log; then
+            echo "PASS: DNS requests logged"
+          else
+            echo "WARN: No DNS requests found in logs"
+          fi
+
+          # Check for TCP connections
+          if grep -q "TCP_CONNECT:" /tmp/mitmproxy.log; then
+            echo "PASS: TCP connections logged"
+          else
+            echo "WARN: No TCP connections found in logs"
+          fi
+
+          # Check for UDP connections
+          if grep -q "UDP_" /tmp/mitmproxy.log; then
+            echo "PASS: UDP connections logged"
+          else
+            echo "WARN: No UDP connections found in logs"
+          fi
+
+          # At minimum, we should see some traffic
+          if grep -qE "(HTTP_|DNS_|TCP_|UDP_)" /tmp/mitmproxy.log; then
+            echo "SUCCESS: Traffic was logged through mitmproxy"
+          else
+            echo "FAILED: No traffic was logged"
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          sudo wg-quick down wg-mitmproxy || true
+          sudo pkill -f mitmdump || true
