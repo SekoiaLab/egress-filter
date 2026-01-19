@@ -54,10 +54,10 @@ tinybpf docker-compile src/bpf/*.bpf.c
 
 ## Dependencies
 
-tinybpf is installed from git (github.com/gregclermont/tinybpf). To pick up changes:
+tinybpf is installed from git (github.com/gregclermont/tinybpf). At the start of each session, suggest updating tinybpf and reading its llms.txt for the latest API:
 
 ```bash
-uv sync --refresh
+uv lock --upgrade-package tinybpf && uv sync
 ```
 
 For local development with a local tinybpf checkout, temporarily change pyproject.toml:

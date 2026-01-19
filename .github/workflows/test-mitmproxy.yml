@@ -32,11 +32,13 @@ jobs:
 
           # Start mitmproxy with our logging addon
           # WireGuard config is printed to stderr, logs to stdout
+          # Note: dns_mode=transparent forwards DNS to original destination
           sudo env PATH="$VENV_BIN:$PATH" \
             PYTHONUNBUFFERED=1 \
             $VENV_BIN/mitmdump \
               --mode wireguard \
               --set block_global=false \
+              --set ssl_insecure=true \
               -s mitmproxy_wg_logger.py \
               > /tmp/mitmproxy.log 2>&1 &
           MITMPROXY_PID=$!
@@ -135,6 +137,10 @@ jobs:
           echo "WireGuard client config:"
           cat /tmp/wg-client.conf
 
+          # Show DNS before WireGuard
+          echo "=== DNS config before WireGuard ==="
+          cat /etc/resolv.conf || true
+
           # Bring up the WireGuard interface
           sudo cp /tmp/wg-client.conf /etc/wireguard/wg-mitmproxy.conf
           sudo wg-quick up wg-mitmproxy
@@ -143,7 +149,16 @@ jobs:
           sudo wg show
 
           # Show routing
+          echo "=== Routing table ==="
           ip route
+
+          # Show DNS after WireGuard
+          echo "=== DNS config after WireGuard ==="
+          cat /etc/resolv.conf || true
+
+          # Test DNS resolution from host (should use mitmproxy DNS)
+          echo "=== Testing DNS resolution ==="
+          nslookup example.com || echo "nslookup failed (expected)"
 
       - name: Run connection tests
         run: |

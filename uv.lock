@@ -22,4 +22,4 @@ requires-dist = [{ name = "tinybpf", git = "https://github.com/gregclermont/tiny
 [[package]]
 name = "tinybpf"
 version = "0.0.1"
-source = { git = "https://github.com/gregclermont/tinybpf.git#c952cc8e084f5fe14fcd55de7a688eba20322842" }
+source = { git = "https://github.com/gregclermont/tinybpf.git#1b52ea385c76bc20dd03f893a78b7ba8a473b349" }

@@ -23,6 +23,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# DNS record type names (RFC 1035 and extensions)
+DNS_TYPE_NAMES = {
+    1: "A",
+    2: "NS",
+    5: "CNAME",
+    6: "SOA",
+    12: "PTR",
+    15: "MX",
+    16: "TXT",
+    28: "AAAA",
+    33: "SRV",
+    35: "NAPTR",
+    43: "DS",
+    46: "RRSIG",
+    47: "NSEC",
+    48: "DNSKEY",
+    52: "TLSA",
+    65: "HTTPS",
+    257: "CAA",
+}
+
+
+def dns_type_name(qtype: int) -> str:
+    """Convert DNS type number to name."""
+    return DNS_TYPE_NAMES.get(qtype, f"TYPE{qtype}")
+
 
 class ConnectionLogger:
     """Addon that logs all connection types with relevant details."""
@@ -47,7 +73,7 @@ class ConnectionLogger:
         """Log DNS requests with question type and name."""
         if flow.request:
             for question in flow.request.questions:
-                qtype = question.type.name
+                qtype = dns_type_name(question.type)
                 qname = question.name
                 logger.info(f"DNS_REQUEST: {qtype} {qname}")
 
@@ -55,7 +81,7 @@ class ConnectionLogger:
         """Log DNS responses with answer data."""
         if flow.response and flow.request and flow.request.questions:
             question = flow.request.questions[0]
-            qtype = question.type.name
+            qtype = dns_type_name(question.type)
             qname = question.name
 
             answers = []

@@ -169,6 +169,45 @@ def test_raw_udp():
         return False
 
 
+def test_tcp_direct_ip():
+    """Make a TCP connection using direct IP (bypasses DNS)."""
+    print("TEST: TCP to 93.184.215.14:80 (example.com by IP)")
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        # example.com IP address
+        sock.connect(("93.184.215.14", 80))
+        request = b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
+        sock.sendall(request)
+        response = sock.recv(1024)
+        sock.close()
+        print(f"  -> Got {len(response)} bytes response")
+        return True
+    except Exception as e:
+        print(f"  -> FAILED: {e}")
+        return False
+
+
+def test_udp_direct_ip():
+    """Make a UDP connection using direct IP (NTP to Google's time server)."""
+    print("TEST: UDP to 216.239.35.0:123 (time.google.com by IP)")
+    try:
+        # Build a simple NTP request
+        ntp_request = b"\x1b" + b"\x00" * 47
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(5)
+        # Google's time server IP
+        sock.sendto(ntp_request, ("216.239.35.0", 123))
+        response, addr = sock.recvfrom(100)
+        sock.close()
+        print(f"  -> Got {len(response)} bytes NTP response")
+        return True
+    except Exception as e:
+        print(f"  -> FAILED: {e}")
+        return False
+
+
 def test_http_post():
     """Make an HTTP POST request."""
     print("TEST: HTTP POST https://httpbin.org/post")
@@ -233,6 +272,13 @@ def main():
 
     # Raw UDP (non-DNS)
     results.append(("Raw UDP (NTP)", test_raw_udp()))
+    time.sleep(0.5)
+
+    # Direct IP tests (bypass DNS)
+    results.append(("TCP Direct IP", test_tcp_direct_ip()))
+    time.sleep(0.5)
+
+    results.append(("UDP Direct IP", test_udp_direct_ip()))
 
     print()
     print("=" * 60)
