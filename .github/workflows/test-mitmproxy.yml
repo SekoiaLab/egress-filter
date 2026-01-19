@@ -181,36 +181,40 @@ jobs:
         run: |
           echo "Checking for logged connections..."
 
-          # Check for HTTP requests
-          if grep -q "HTTP_REQUEST:" /tmp/mitmproxy.log; then
-            echo "PASS: HTTP requests logged"
+          # Check for HTTP (format: HTTP: METHOD URL -> STATUS)
+          if grep -q "^HTTP:" /tmp/mitmproxy.log; then
+            echo "PASS: HTTP logged"
+            grep "^HTTP:" /tmp/mitmproxy.log | head -5
           else
-            echo "WARN: No HTTP requests found in logs"
+            echo "WARN: No HTTP found in logs"
           fi
 
-          # Check for DNS requests
-          if grep -q "DNS_REQUEST:" /tmp/mitmproxy.log; then
-            echo "PASS: DNS requests logged"
+          # Check for DNS (format: DNS: TYPE NAME -> RESULT)
+          if grep -q "^DNS:" /tmp/mitmproxy.log; then
+            echo "PASS: DNS logged"
+            grep "^DNS:" /tmp/mitmproxy.log | head -5
           else
-            echo "WARN: No DNS requests found in logs"
+            echo "WARN: No DNS found in logs"
           fi
 
-          # Check for TCP connections
-          if grep -q "TCP_CONNECT:" /tmp/mitmproxy.log; then
-            echo "PASS: TCP connections logged"
+          # Check for TCP (format: TCP: IP:PORT)
+          if grep -q "^TCP:" /tmp/mitmproxy.log; then
+            echo "PASS: TCP logged"
+            grep "^TCP:" /tmp/mitmproxy.log | head -5
           else
-            echo "WARN: No TCP connections found in logs"
+            echo "WARN: No raw TCP found in logs"
           fi
 
-          # Check for UDP connections
-          if grep -q "UDP_" /tmp/mitmproxy.log; then
-            echo "PASS: UDP connections logged"
+          # Check for UDP (format: UDP: IP:PORT)
+          if grep -q "^UDP:" /tmp/mitmproxy.log; then
+            echo "PASS: UDP logged"
+            grep "^UDP:" /tmp/mitmproxy.log | head -5
           else
-            echo "WARN: No UDP connections found in logs"
+            echo "WARN: No raw UDP found in logs"
           fi
 
           # At minimum, we should see some traffic
-          if grep -qE "(HTTP_|DNS_|TCP_|UDP_)" /tmp/mitmproxy.log; then
+          if grep -qE "^(HTTP|DNS|TCP|UDP):" /tmp/mitmproxy.log; then
             echo "SUCCESS: Traffic was logged through mitmproxy"
           else
             echo "FAILED: No traffic was logged"
