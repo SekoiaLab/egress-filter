@@ -44,57 +44,81 @@ jobs:
           cat /proc/self/cgroup
           ls -la /sys/fs/cgroup/
 
-          # First, test direct BPF loading with explicit error output
-          echo "=== Direct BPF load test ==="
+          # Load BPF programs and keep them pinned for manual attach test
+          echo "=== Loading BPF programs ==="
           sudo env PYTHONPATH="$SITE_PACKAGES" $PYTHON -c "
           import tinybpf
           from pathlib import Path
-          # Init with system libbpf (same as main.py)
           for p in ['/usr/lib/x86_64-linux-gnu/libbpf.so.1', '/usr/lib/libbpf.so.1']:
               if Path(p).exists():
                   tinybpf.init(p)
                   break
-          print('tinybpf initialized')
           obj = tinybpf.load('src/bpf/port_tracker.bpf.o')
           print('Object loaded')
           print('Programs:', list(obj.programs.keys()))
-          print('Maps:', list(obj.maps.keys()))
 
-          # Try to attach
-          try:
-              prog = obj.program('handle_sockops')
-              print(f'handle_sockops program: {prog}')
-              prog.attach_cgroup('/sys/fs/cgroup')
-              print('handle_sockops attached')
-          except Exception as e:
-              print(f'handle_sockops attach error: {e}')
+          # Get FDs by keeping programs loaded
+          sockops = obj.program('handle_sockops')
+          sendmsg4 = obj.program('handle_sendmsg4')
+          sendmsg6 = obj.program('handle_sendmsg6')
+          print(f'sockops: {sockops}')
+          print(f'sendmsg4: {sendmsg4}')
+          print(f'sendmsg6: {sendmsg6}')
 
-          try:
-              prog = obj.program('handle_sendmsg4')
-              print(f'handle_sendmsg4 program: {prog}')
-              prog.attach_cgroup('/sys/fs/cgroup')
-              print('handle_sendmsg4 attached')
-          except Exception as e:
-              print(f'handle_sendmsg4 attach error: {e}')
-
-          try:
-              prog = obj.program('handle_sendmsg6')
-              print(f'handle_sendmsg6 program: {prog}')
-              prog.attach_cgroup('/sys/fs/cgroup')
-              print('handle_sendmsg6 attached')
-          except Exception as e:
-              print(f'handle_sendmsg6 attach error: {e}')
-
-          print('Test complete - keeping object loaded')
+          # Keep loaded
           import time
-          time.sleep(5)  # Keep loaded for bpftool inspection
-          "
+          time.sleep(30)
+          " &
+          LOAD_PID=$!
+          sleep 2
+
+          echo "=== Loaded BPF programs ==="
+          sudo bpftool prog list | grep -E "handle_sockops|handle_sendmsg" || true
+
+          # Get program IDs
+          SOCKOPS_ID=$(sudo bpftool prog list | grep handle_sockops | awk '{print $1}' | tr -d ':')
+          SENDMSG4_ID=$(sudo bpftool prog list | grep handle_sendmsg4 | awk '{print $1}' | tr -d ':')
+          SENDMSG6_ID=$(sudo bpftool prog list | grep handle_sendmsg6 | awk '{print $1}' | tr -d ':')
+
+          echo "Program IDs: sockops=$SOCKOPS_ID sendmsg4=$SENDMSG4_ID sendmsg6=$SENDMSG6_ID"
+
+          # Try manual bpftool attach
+          echo "=== Trying manual bpftool attach ==="
+          if [ -n "$SOCKOPS_ID" ]; then
+            echo "Attaching sock_ops ($SOCKOPS_ID) to cgroup..."
+            sudo bpftool cgroup attach /sys/fs/cgroup sock_ops id $SOCKOPS_ID 2>&1 || echo "Failed to attach sock_ops"
+          fi
+          if [ -n "$SENDMSG4_ID" ]; then
+            echo "Attaching sendmsg4 ($SENDMSG4_ID) to cgroup..."
+            sudo bpftool cgroup attach /sys/fs/cgroup sendmsg4 id $SENDMSG4_ID 2>&1 || echo "Failed to attach sendmsg4"
+          fi
+          if [ -n "$SENDMSG6_ID" ]; then
+            echo "Attaching sendmsg6 ($SENDMSG6_ID) to cgroup..."
+            sudo bpftool cgroup attach /sys/fs/cgroup sendmsg6 id $SENDMSG6_ID 2>&1 || echo "Failed to attach sendmsg6"
+          fi
 
           # Check what got attached
-          echo "=== After direct test - BPF programs ==="
-          sudo bpftool prog list | tail -20 || true
-          echo "=== After direct test - cgroup attachments ==="
+          echo "=== Cgroup attachments after manual attach ==="
           sudo bpftool cgroup show /sys/fs/cgroup 2>/dev/null || true
+
+          # Make test connection
+          echo "=== Making test connection ==="
+          curl -s https://example.com > /dev/null || true
+          sleep 1
+
+          # Check map contents
+          echo "=== Map contents after curl ==="
+          MAP_ID=$(sudo bpftool map list | grep conn_to_pid_v4 | awk '{print $1}' | tr -d ':')
+          if [ -n "$MAP_ID" ]; then
+            sudo bpftool map dump id $MAP_ID 2>&1 || true
+          fi
+
+          # Cleanup test
+          kill $LOAD_PID 2>/dev/null || true
+
+          # Now run the tracker for real test
+          echo ""
+          echo "=== Running full tracker test ==="
 
           # Run tracker in background with proper paths
           sudo env PYTHONPATH="$SITE_PACKAGES" PYTHONUNBUFFERED=1 \
