@@ -26,10 +26,10 @@ jobs:
 
       - name: Test BPF load and tracking
         run: |
-          # Start tracker in background, dump every second
-          sudo uv run python main.py run --interval 1 > /tmp/tracker.log 2>&1 &
+          # Start tracker in background using tinybpf run-elevated
+          uv run tinybpf run-elevated main.py -- run --interval 1 > /tmp/tracker.log 2>&1 &
           TRACKER_PID=$!
-          sleep 2
+          sleep 3
 
           # Check if tracker started
           if ! kill -0 $TRACKER_PID 2>/dev/null; then
@@ -44,7 +44,7 @@ jobs:
           CURL_PID=$!
 
           # Give it time to connect and be tracked
-          sleep 2
+          sleep 3
 
           # Dump current state
           echo "=== Tracker output ==="
