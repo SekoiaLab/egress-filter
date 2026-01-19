@@ -28,12 +28,10 @@ struct {
 // Helpers
 // ============================================
 
-static __always_inline bool is_v4_mapped(u32 *ip6) {
-    // ::ffff:x.x.x.x
-    return ip6[0] == 0 &&
-           ip6[1] == 0 &&
-           ip6[2] == bpf_htonl(0x0000ffff);
-}
+// Check if IPv6 address is v4-mapped (::ffff:x.x.x.x)
+// Must access context fields directly to satisfy verifier
+#define IS_V4_MAPPED(ip6_0, ip6_1, ip6_2) \
+    ((ip6_0) == 0 && (ip6_1) == 0 && (ip6_2) == bpf_htonl(0x0000ffff))
 
 static __always_inline bool ipv6_blocked(void) {
     u32 key = CFG_BLOCK_IPV6;
@@ -48,7 +46,7 @@ static __always_inline bool ipv6_blocked(void) {
 SEC("cgroup/connect6")
 int block_connect6(struct bpf_sock_addr *ctx) {
     // v4-mapped: allow
-    if (is_v4_mapped(ctx->user_ip6))
+    if (IS_V4_MAPPED(ctx->user_ip6[0], ctx->user_ip6[1], ctx->user_ip6[2]))
         return 1;
 
     // Native IPv6: block if configured
@@ -65,7 +63,7 @@ int block_connect6(struct bpf_sock_addr *ctx) {
 SEC("cgroup/sendmsg6")
 int block_sendmsg6(struct bpf_sock_addr *ctx) {
     // v4-mapped: allow
-    if (is_v4_mapped(ctx->user_ip6))
+    if (IS_V4_MAPPED(ctx->user_ip6[0], ctx->user_ip6[1], ctx->user_ip6[2]))
         return 1;
 
     // Native IPv6: block if configured
