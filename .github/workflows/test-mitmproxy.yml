@@ -21,109 +21,46 @@ jobs:
       - name: Install Python dependencies for tests
         run: uv sync
 
-      - name: Inspect cgroup structure
+      - name: Start mitmproxy in Docker container
         run: |
-          echo "=== Cgroup mount points ==="
-          mount | grep cgroup
+          # Run mitmproxy in a Docker container to provide network isolation
+          # The container has its own network stack so outbound traffic doesn't loop
 
-          echo ""
-          echo "=== /sys/fs/cgroup contents ==="
-          ls -la /sys/fs/cgroup/
+          # Create a Docker network for mitmproxy
+          docker network create --subnet=172.30.0.0/24 mitmproxy-net
 
-          echo ""
-          echo "=== Cgroup version check ==="
-          if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
-            echo "cgroup v2 (unified hierarchy)"
-            cat /sys/fs/cgroup/cgroup.controllers
-          else
-            echo "cgroup v1 or hybrid"
-          fi
-
-          echo ""
-          echo "=== net_cls cgroup (v1) ==="
-          ls -la /sys/fs/cgroup/net_cls/ 2>/dev/null || echo "net_cls not available"
-
-          echo ""
-          echo "=== Current process cgroup ==="
-          cat /proc/self/cgroup
-
-          echo ""
-          echo "=== iptables cgroup module ==="
-          sudo iptables -m cgroup --help 2>&1 | head -20 || echo "cgroup match not available"
-
-          echo ""
-          echo "=== Kernel config for cgroup ==="
-          zcat /proc/config.gz 2>/dev/null | grep -i cgroup | head -20 || \
-            grep -i cgroup /boot/config-$(uname -r) 2>/dev/null | head -20 || \
-            echo "Kernel config not available"
-
-      - name: Setup mitmproxy user with dedicated uv install
-        run: |
-          # Create dedicated user for mitmproxy
-          sudo useradd -r -m mitmproxy-user
-          sudo mkdir -p /home/mitmproxy-user/.local/bin
-          sudo chown -R mitmproxy-user:mitmproxy-user /home/mitmproxy-user
-
-          # Install uv for mitmproxy-user (UV_UNMANAGED_INSTALL skips receipt file)
-          sudo -u mitmproxy-user -H bash -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=/home/mitmproxy-user/.local/bin sh'
-
-          # Create venv and install mitmproxy
-          sudo -i -u mitmproxy-user /home/mitmproxy-user/.local/bin/uv venv --python 3.12 /home/mitmproxy-user/venv
-          sudo -i -u mitmproxy-user /home/mitmproxy-user/.local/bin/uv pip install --python /home/mitmproxy-user/venv/bin/python mitmproxy
-
-          # Copy the logger script
-          sudo cp mitmproxy_wg_logger.py /home/mitmproxy-user/
-          sudo chown mitmproxy-user:mitmproxy-user /home/mitmproxy-user/mitmproxy_wg_logger.py
-
-          # Mark packets from mitmproxy-user to bypass WireGuard routing
-          sudo iptables -t mangle -A OUTPUT -m owner --uid-owner mitmproxy-user -j MARK --set-mark 0x1
-          sudo ip rule add fwmark 0x1 lookup main priority 100
-
-          echo "mitmproxy-user setup complete"
-
-      - name: Start mitmproxy
-        run: |
-          LOGFILE=/home/mitmproxy-user/mitmproxy.log
-
-          # Give mitmproxy-user's Python the network admin capability
-          # This allows creating WireGuard interfaces without full root
-          sudo setcap 'cap_net_admin+ep cap_net_bind_service+ep' /home/mitmproxy-user/venv/bin/python3.12
-
-          # Start mitmproxy as dedicated user using the pre-installed venv
-          sudo -i -u mitmproxy-user bash -c '/home/mitmproxy-user/venv/bin/mitmdump \
-            --mode wireguard \
-            --set block_global=false \
-            -s /home/mitmproxy-user/mitmproxy_wg_logger.py \
-            > /home/mitmproxy-user/mitmproxy.log 2>&1' &
-
-          MITMPROXY_PID=$!
-          echo "MITMPROXY_PID=$MITMPROXY_PID" >> $GITHUB_ENV
-          echo "LOGFILE=$LOGFILE" >> $GITHUB_ENV
-          echo "Started mitmproxy wrapper with PID $MITMPROXY_PID"
+          # Start mitmproxy container
+          docker run -d --name mitmproxy \
+            --network mitmproxy-net \
+            --ip 172.30.0.2 \
+            -p 51820:51820/udp \
+            -v "$(pwd)/mitmproxy_wg_logger.py:/app/mitmproxy_wg_logger.py:ro" \
+            mitmproxy/mitmproxy:latest \
+            mitmdump --mode wireguard --set block_global=false -s /app/mitmproxy_wg_logger.py
 
           # Wait for mitmproxy to start
           echo "Waiting for mitmproxy to start..."
           for i in {1..60}; do
-            if sudo cat $LOGFILE 2>/dev/null | grep -q "WireGuard server listening"; then
+            if docker logs mitmproxy 2>&1 | grep -q "WireGuard server listening"; then
               echo "mitmproxy started"
               break
             fi
-            # Check if the process is still running
-            if ! ps -p $MITMPROXY_PID > /dev/null 2>&1; then
-              echo "ERROR: mitmproxy process died"
-              sudo cat $LOGFILE || echo "No log file"
+            if ! docker ps -q -f name=mitmproxy | grep -q .; then
+              echo "ERROR: mitmproxy container died"
+              docker logs mitmproxy
               exit 1
             fi
             sleep 1
           done
 
+          # Show logs
           echo "=== mitmproxy log at startup ==="
-          sudo cat $LOGFILE
+          docker logs mitmproxy
 
       - name: Extract and setup WireGuard client
         run: |
-          # Extract WireGuard config from mitmproxy output
-          sudo cat $LOGFILE > /tmp/mitmproxy.log
+          # Extract WireGuard config from docker logs
+          docker logs mitmproxy 2>&1 > /tmp/mitmproxy.log
           python3 << 'PYEOF'
           import re
 
@@ -156,6 +93,9 @@ jobs:
                       match = re.search(rf'{key}\s*=\s*(.+)', line)
                       if match:
                           value = match.group(1).strip()
+                          # Replace endpoint IP with localhost (port forwarded)
+                          if key == 'Endpoint':
+                              value = re.sub(r'^[\d.]+:', '127.0.0.1:', value)
                           config_lines.append(f'{key} = {value}')
                           break
 
@@ -185,12 +125,12 @@ jobs:
         if: always()
         run: |
           echo "=== mitmproxy logs ==="
-          sudo cat $LOGFILE || echo "No logs found"
+          docker logs mitmproxy 2>&1 || echo "No logs found"
 
       - name: Verify logged connections
         run: |
           echo "Checking for logged connections..."
-          sudo cat $LOGFILE > /tmp/mitmproxy.log
+          docker logs mitmproxy 2>&1 > /tmp/mitmproxy.log
 
           for pattern in "HTTP:" "DNS:" "TCP:" "UDP:"; do
             if grep -q "$pattern" /tmp/mitmproxy.log; then
@@ -212,5 +152,6 @@ jobs:
         if: always()
         run: |
           sudo wg-quick down wg0 || true
-          sudo pkill -f mitmdump || true
-          sudo userdel -r mitmproxy-user || true
+          docker stop mitmproxy || true
+          docker rm mitmproxy || true
+          docker network rm mitmproxy-net || true
