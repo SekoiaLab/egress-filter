@@ -271,15 +271,17 @@ class NfqueueHandler:
 
                     comm = get_comm(pid) if pid else "?"
 
-                    # DNS packets (port 53): extract txid and cache for mitmproxy
+                    # DNS detection by packet structure (catches DNS on any port)
                     # This runs in mangle (before NAT), so we see the original destination
-                    if dst_port == 53 and ip.haslayer(DNS):
+                    if ip.haslayer(DNS):
                         dns_layer = ip[DNS]
                         txid = dns_layer.id
+                        # Mark packet for iptables to redirect to mitmproxy
+                        pkt.set_mark(2)
                         # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
                         cache_key = (src_port, txid)
                         shared_state.dns_cache[cache_key] = (pid, dst_ip, dst_port)
-                        logger.info(f"DNS(nfq) src={src_ip}:{src_port} dst={dst_ip}:{dst_port} txid={txid} pid={pid or '?'} comm={comm}")
+                        logger.info(f"DNS(nfq) src={src_ip}:{src_port} dst={dst_ip}:{dst_port} txid={txid} pid={pid or '?'} comm={comm} mark=2")
                     else:
                         # Non-DNS UDP
                         logger.info(f"UDP src={src_ip}:{src_port} dst={dst_ip}:{dst_port} pid={pid or '?'} comm={comm}")
