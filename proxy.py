@@ -208,6 +208,9 @@ class ConnectionLogger:
         # Get original destination (before iptables redirect)
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else (None, 53)
 
+        # Debug: log what we see
+        logger.info(f"DNS DEBUG: server_conn.address={flow.server_conn.address} client_peername={flow.client_conn.peername}")
+
         pid = None
         # Try original destination first
         if dst_ip:
