@@ -117,12 +117,6 @@ skip_test() {
     TEST_EXPECTED+=("SKIP")
 }
 
-# Check for IPv6 connectivity
-has_ipv6() {
-    # Check if we have a global IPv6 address
-    ip -6 addr show scope global 2>/dev/null | grep -q inet6
-}
-
 echo "========================================"
 echo "PID Tracking Comprehensive Test Suite"
 echo "========================================"
@@ -189,14 +183,10 @@ run_test "DNS via system resolver" "PASS" \
 echo ""
 echo "### IPv6 Tests ###"
 
-# Native IPv6 is blocked by BPF (ipv6_blocker.bpf.c)
-if has_ipv6; then
-    # Native IPv6 should be blocked (EPERM)
-    run_test "HTTPS/IPv6 native (blocked)" "FAIL" \
-        curl -s -o /dev/null -m 5 -6 https://ipv6.google.com/
-else
-    skip_test "HTTPS/IPv6 native (blocked)" "No IPv6 connectivity"
-fi
+# Native IPv6 is blocked by BPF (ipv6_blocker.bpf.c) at syscall level
+# Should fail with EPERM regardless of network connectivity
+run_test "HTTPS/IPv6 native (blocked)" "FAIL" \
+    curl -s -o /dev/null -m 5 -6 https://ipv6.google.com/
 
 # IPv4-mapped IPv6 (::ffff:x.x.x.x) - blocked by BPF to prevent proxy bypass
 # These connections would bypass iptables REDIRECT, so we block them entirely.
