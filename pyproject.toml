@@ -6,6 +6,8 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "tinybpf==0.1.0",
     "mitmproxy",
+    "netfilterqueue",
+    "scapy",
 ]
 
 [[tool.uv.index]]
