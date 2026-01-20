@@ -8,11 +8,7 @@
 - [x] Test unified_proxy.py with mitmproxy + netfilterqueue - working in CI
 - [x] UDP non-DNS PID tracking via netfilterqueue + scapy (tested with port 9999)
 - [x] Block direct proxy connections via iptables mangle+filter
-- [x] Add IPv6 blocker BPF (blocks native IPv6, allows IPv4-mapped addresses)
-
-## Known Limitations
-
-- IPv4-mapped IPv6 (::ffff:x.x.x.x) bypasses mitmproxy transparent mode - this is an iptables REDIRECT limitation with AF_INET6 sockets, not a BPF tracking issue. These connections still succeed but aren't proxied.
+- [x] Add IPv6 blocker BPF (blocks ALL IPv6 including IPv4-mapped to prevent proxy bypass)
 
 ## Ideas
 

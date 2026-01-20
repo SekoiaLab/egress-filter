@@ -1,45 +1,31 @@
 // SPDX-License-Identifier: GPL-2.0
 //
-// ipv6_blocker.bpf.c - Block native IPv6 connections
+// ipv6_blocker.bpf.c - Block ALL IPv6 connections (including IPv4-mapped)
 //
-// Security-focused: blocks native IPv6 to simplify threat analysis
-// (IPv6 has less threat intel coverage). IPv4-mapped addresses are allowed.
+// Blocks all AF_INET6 socket connections to ensure traffic goes through
+// our transparent proxy. IPv4-mapped addresses (::ffff:x.x.x.x) bypass
+// iptables REDIRECT, so we block them to force apps to use AF_INET sockets.
 //
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_endian.h>
-
-// Check if IPv6 address is v4-mapped (::ffff:x.x.x.x)
-#define IS_V4_MAPPED(ip6_0, ip6_1, ip6_2) \
-    ((ip6_0) == 0 && (ip6_1) == 0 && (ip6_2) == bpf_htonl(0x0000ffff))
 
 // ============================================
-// TCP: connect6
+// TCP: connect6 - block all
 // ============================================
 
 SEC("cgroup/connect6")
 int block_connect6(struct bpf_sock_addr *ctx) {
-    // v4-mapped: allow
-    if (IS_V4_MAPPED(ctx->user_ip6[0], ctx->user_ip6[1], ctx->user_ip6[2]))
-        return 1;
-
-    // Native IPv6: block
-    return 0;
+    return 0;  // Block all IPv6 (native and v4-mapped)
 }
 
 // ============================================
-// UDP: sendmsg6
+// UDP: sendmsg6 - block all
 // ============================================
 
 SEC("cgroup/sendmsg6")
 int block_sendmsg6(struct bpf_sock_addr *ctx) {
-    // v4-mapped: allow
-    if (IS_V4_MAPPED(ctx->user_ip6[0], ctx->user_ip6[1], ctx->user_ip6[2]))
-        return 1;
-
-    // Native IPv6: block
-    return 0;
+    return 0;  // Block all IPv6 (native and v4-mapped)
 }
 
 char LICENSE[] SEC("license") = "GPL";
