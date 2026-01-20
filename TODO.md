@@ -10,5 +10,8 @@
 
 ## Next Steps
 
-- [ ] HTTP via direct proxy - loopback connection to proxy, no BPF hook fires
 - [ ] Consider removing IPv6 code (untested, GitHub runners lack IPv6)
+
+## Ideas
+
+- [ ] Reject untracked connections in mitmproxy addon (defense in depth once PID tracking is reliable)

@@ -155,14 +155,12 @@ run_test "HTTPS/IPv4 external" "PASS" \
 run_test "TCP/raw external (SSH)" "PASS" \
     nc -z -w 5 github.com 22
 
-# TCP via explicit proxy (not iptables redirect)
-run_test "HTTP via direct proxy" "?" \
-    curl -s -o /dev/null -m 5 --proxy http://localhost:8080 http://example.com/
+# Direct proxy connections are blocked via iptables (can't track PID for loopback)
+# These should fail to connect (dropped by iptables mangle+filter)
+run_test "HTTP via direct proxy (blocked)" "FAIL" \
+    curl -s -o /dev/null -m 2 --proxy http://localhost:8080 http://example.com/
 
-# TCP to loopback - should FAIL (no kprobe for TCP loopback)
-# We need a service listening on localhost for this
-# Skip if nothing is listening on localhost:8080 besides our proxy
-run_test "TCP to loopback (proxy)" "FAIL" \
+run_test "TCP to loopback (blocked)" "FAIL" \
     curl -s -o /dev/null -m 2 http://127.0.0.1:8080/
 
 # ============================================

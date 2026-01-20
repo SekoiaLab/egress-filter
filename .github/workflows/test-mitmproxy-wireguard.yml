@@ -74,6 +74,13 @@ jobs:
           sudo sysctl -w net.ipv4.ip_forward=1
           sudo sysctl -w net.ipv6.conf.all.forwarding=1
           sudo sysctl -w net.ipv4.conf.all.send_redirects=0
+
+          # Block direct proxy connections (before NAT redirect)
+          # Mark packets going directly to proxy in mangle (runs before nat)
+          sudo iptables -t mangle -A OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -m owner ! --uid-owner 0 -j MARK --set-mark 1
+          # Drop marked packets in filter
+          sudo iptables -A OUTPUT -m mark --mark 1 -j DROP
+
           # TCP -> transparent proxy (8080)
           sudo iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
           sudo iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
