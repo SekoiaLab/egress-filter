@@ -152,7 +152,7 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
     struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
 
-    if (!sk || !msg)
+    if (!sk)
         return 0;
 
     // Get source port from socket
@@ -161,59 +161,110 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
     if (src_port == 0)
         return 0;
 
-    // Get destination from msg_name (sockaddr)
-    struct sockaddr *addr;
-    BPF_CORE_READ_INTO(&addr, msg, msg_name);
-    if (!addr)
-        return 0;
-
-    // Check address family
-    u16 family;
-    bpf_probe_read_kernel(&family, sizeof(family), &addr->sa_family);
-
     u32 pid = bpf_get_current_pid_tgid() >> 32;
 
-    if (family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)addr;
-        u32 dst_ip;
-        u16 dst_port;
-        bpf_probe_read_kernel(&dst_ip, sizeof(dst_ip), &sin->sin_addr.s_addr);
-        bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &sin->sin_port);
+    // Try to get destination from msg_name first (unconnected sends)
+    struct sockaddr *addr = NULL;
+    if (msg)
+        BPF_CORE_READ_INTO(&addr, msg, msg_name);
 
-        struct conn_key_v4 key = {
-            .dst_ip = dst_ip,
-            .src_port = src_port,
-            .dst_port = bpf_ntohs(dst_port),
-            .protocol = IPPROTO_UDP,
-        };
-        bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-    } else if (family == AF_INET6) {
-        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
-        u32 dst_ip6[4];
-        u16 dst_port;
-        bpf_probe_read_kernel(&dst_ip6, sizeof(dst_ip6), &sin6->sin6_addr.in6_u.u6_addr32);
-        bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &sin6->sin6_port);
+    if (addr) {
+        // Unconnected UDP: destination is in msg_name
+        u16 family;
+        bpf_probe_read_kernel(&family, sizeof(family), &addr->sa_family);
 
-        // Check for v4-mapped
-        if (dst_ip6[0] == 0 && dst_ip6[1] == 0 && dst_ip6[2] == bpf_htonl(0x0000ffff)) {
+        if (family == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)addr;
+            u32 dst_ip;
+            u16 dst_port;
+            bpf_probe_read_kernel(&dst_ip, sizeof(dst_ip), &sin->sin_addr.s_addr);
+            bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &sin->sin_port);
+
             struct conn_key_v4 key = {
-                .dst_ip = dst_ip6[3],
+                .dst_ip = dst_ip,
                 .src_port = src_port,
                 .dst_port = bpf_ntohs(dst_port),
                 .protocol = IPPROTO_UDP,
             };
             bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-        } else {
-            struct conn_key_v6 key = {
+        } else if (family == AF_INET6) {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
+            u32 dst_ip6[4];
+            u16 dst_port;
+            bpf_probe_read_kernel(&dst_ip6, sizeof(dst_ip6), &sin6->sin6_addr.in6_u.u6_addr32);
+            bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &sin6->sin6_port);
+
+            if (dst_ip6[0] == 0 && dst_ip6[1] == 0 && dst_ip6[2] == bpf_htonl(0x0000ffff)) {
+                struct conn_key_v4 key = {
+                    .dst_ip = dst_ip6[3],
+                    .src_port = src_port,
+                    .dst_port = bpf_ntohs(dst_port),
+                    .protocol = IPPROTO_UDP,
+                };
+                bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
+            } else {
+                struct conn_key_v6 key = {
+                    .src_port = src_port,
+                    .dst_port = bpf_ntohs(dst_port),
+                    .protocol = IPPROTO_UDP,
+                };
+                key.dst_ip[0] = dst_ip6[0];
+                key.dst_ip[1] = dst_ip6[1];
+                key.dst_ip[2] = dst_ip6[2];
+                key.dst_ip[3] = dst_ip6[3];
+                bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
+            }
+        }
+    } else {
+        // Connected UDP: destination is in the socket
+        u16 family;
+        BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
+
+        if (family == AF_INET) {
+            u32 dst_ip;
+            u16 dst_port;
+            BPF_CORE_READ_INTO(&dst_ip, sk, __sk_common.skc_daddr);
+            BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
+
+            if (dst_ip == 0)
+                return 0;
+
+            struct conn_key_v4 key = {
+                .dst_ip = dst_ip,
                 .src_port = src_port,
                 .dst_port = bpf_ntohs(dst_port),
                 .protocol = IPPROTO_UDP,
             };
-            key.dst_ip[0] = dst_ip6[0];
-            key.dst_ip[1] = dst_ip6[1];
-            key.dst_ip[2] = dst_ip6[2];
-            key.dst_ip[3] = dst_ip6[3];
-            bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
+            bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
+        } else if (family == AF_INET6) {
+            u32 dst_ip6[4];
+            u16 dst_port;
+            BPF_CORE_READ_INTO(&dst_ip6, sk, __sk_common.skc_v6_daddr.in6_u.u6_addr32);
+            BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
+
+            if (dst_ip6[0] == 0 && dst_ip6[1] == 0 && dst_ip6[2] == 0 && dst_ip6[3] == 0)
+                return 0;
+
+            if (dst_ip6[0] == 0 && dst_ip6[1] == 0 && dst_ip6[2] == bpf_htonl(0x0000ffff)) {
+                struct conn_key_v4 key = {
+                    .dst_ip = dst_ip6[3],
+                    .src_port = src_port,
+                    .dst_port = bpf_ntohs(dst_port),
+                    .protocol = IPPROTO_UDP,
+                };
+                bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
+            } else {
+                struct conn_key_v6 key = {
+                    .src_port = src_port,
+                    .dst_port = bpf_ntohs(dst_port),
+                    .protocol = IPPROTO_UDP,
+                };
+                key.dst_ip[0] = dst_ip6[0];
+                key.dst_ip[1] = dst_ip6[1];
+                key.dst_ip[2] = dst_ip6[2];
+                key.dst_ip[3] = dst_ip6[3];
+                bpf_map_update_elem(&conn_to_pid_v6, &key, &pid, BPF_ANY);
+            }
         }
     }
 
