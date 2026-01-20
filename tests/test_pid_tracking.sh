@@ -217,9 +217,9 @@ fi
 echo ""
 echo "### UDP Tests (non-DNS) ###"
 
-# Non-DNS UDP to external - should FAIL (not redirected by iptables)
-# We'll try to send a UDP packet to a random port
-run_test "UDP non-DNS to external" "FAIL" \
+# Non-DNS UDP to external (port 9999) - redirected to nfqueue for logging
+# This tests that netfilterqueue + scapy can track UDP PIDs
+run_test "UDP non-DNS to external (port 9999)" "PASS" \
     nc -u -z -w 2 8.8.8.8 9999
 
 # ============================================

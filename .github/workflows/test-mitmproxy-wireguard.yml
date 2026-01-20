@@ -92,6 +92,9 @@ jobs:
           sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -d ::1 -m owner --uid-owner 0 -j RETURN
           sudo ip6tables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 8053
 
+          # Non-DNS UDP (port 9999) -> nfqueue for logging test
+          sudo iptables -A OUTPUT -p udp --dport 9999 -j NFQUEUE --queue-num 1
+
           # Install mitmproxy certificate as system CA
           sudo mkdir -p /usr/local/share/ca-certificates/extra
           sudo openssl x509 -in /root/.mitmproxy/mitmproxy-ca-cert.pem -inform PEM -out /tmp/mitmproxy-ca-cert.crt
