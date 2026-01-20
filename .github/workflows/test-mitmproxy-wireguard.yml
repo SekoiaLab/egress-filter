@@ -85,6 +85,12 @@ jobs:
           # Drop marked packets in filter
           sudo iptables -A OUTPUT -m mark --mark 1 -j DROP
 
+          # DNS to nfqueue in mangle (BEFORE nat redirect) - captures original 4-tuple
+          # This allows us to see the real destination before REDIRECT changes it
+          sudo iptables -t mangle -A OUTPUT -p udp --dport 53 -m owner --uid-owner systemd-resolve -j RETURN
+          sudo iptables -t mangle -A OUTPUT -p udp --dport 53 -m owner --uid-owner 0 -j RETURN
+          sudo iptables -t mangle -A OUTPUT -p udp --dport 53 -j NFQUEUE --queue-num 1
+
           # TCP -> transparent proxy (8080)
           sudo iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
           sudo iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080

@@ -115,6 +115,9 @@ class SharedState:
         self.running = False
         self.bpf_path = bpf_path
         self.ipv6_blocker_path = ipv6_blocker_path
+        # DNS 4-tuple cache: (src_port, txid) -> (pid, dst_ip, dst_port)
+        # Populated by nfqueue (before NAT), consumed by mitmproxy (after NAT)
+        self.dns_cache = {}
 
     def setup_bpf(self):
         """Load and attach BPF programs."""
@@ -212,8 +215,19 @@ class MitmproxyAddon:
     def dns_request(self, flow: dns.DNSFlow) -> None:
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         query_name = flow.request.questions[0].name if flow.request.questions else "?"
+        txid = flow.request.id
 
-        # Try various lookups
+        # Try to get info from nfqueue cache (has original 4-tuple from before NAT)
+        cache_key = (src_port, txid)
+        cached = shared_state.dns_cache.pop(cache_key, None)
+
+        if cached:
+            pid, original_dst_ip, original_dst_port = cached
+            comm = get_comm(pid) if pid else "?"
+            logger.info(f"DNS src_port={src_port} dst={original_dst_ip}:{original_dst_port} name={query_name} txid={txid} pid={pid or '?'} comm={comm}")
+            return
+
+        # Fallback: try BPF lookups (for cases where nfqueue didn't see the packet)
         pid = None
         dst_ip, dst_port = flow.server_conn.address if flow.server_conn.address else (None, 53)
         if dst_ip:
@@ -226,7 +240,7 @@ class MitmproxyAddon:
             pid = shared_state.lookup_dns_pid(src_port)
 
         comm = get_comm(pid) if pid else "?"
-        logger.info(f"DNS src_port={src_port} name={query_name} pid={pid or '?'} comm={comm}")
+        logger.info(f"DNS src_port={src_port} name={query_name} txid={txid} pid={pid or '?'} comm={comm} (fallback)")
 
 
 class NfqueueHandler:
@@ -257,8 +271,18 @@ class NfqueueHandler:
 
                     comm = get_comm(pid) if pid else "?"
 
-                    # Log it
-                    logger.info(f"UDP src={src_ip}:{src_port} dst={dst_ip}:{dst_port} pid={pid or '?'} comm={comm}")
+                    # DNS packets (port 53): extract txid and cache for mitmproxy
+                    # This runs in mangle (before NAT), so we see the original destination
+                    if dst_port == 53 and ip.haslayer(DNS):
+                        dns_layer = ip[DNS]
+                        txid = dns_layer.id
+                        # Cache: (src_port, txid) -> (pid, dst_ip, dst_port)
+                        cache_key = (src_port, txid)
+                        shared_state.dns_cache[cache_key] = (pid, dst_ip, dst_port)
+                        logger.info(f"DNS(nfq) src={src_ip}:{src_port} dst={dst_ip}:{dst_port} txid={txid} pid={pid or '?'} comm={comm}")
+                    else:
+                        # Non-DNS UDP
+                        logger.info(f"UDP src={src_ip}:{src_port} dst={dst_ip}:{dst_port} pid={pid or '?'} comm={comm}")
         except Exception as e:
             logger.warning(f"Error processing UDP packet: {e}")
 
