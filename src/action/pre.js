@@ -2,11 +2,14 @@ const core = require('@actions/core');
 const exec = require('@actions/exec');
 const path = require('path');
 
+// Compute action root at runtime (2 levels up from dist/pre/)
+// Use array join to prevent ncc from transforming the path
+const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
+
 async function run() {
   try {
-    // Action root is 2 levels up from dist/pre/
-    const actionPath = path.resolve(__dirname, '..', '..');
-    const setupScript = path.join(actionPath, 'scripts', 'setup-proxy.sh');
+    const actionPath = getActionPath();
+    const setupScript = [actionPath, 'scripts', 'setup-proxy.sh'].join(path.sep);
 
     // Pass action path so script doesn't need to calculate it
     const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
