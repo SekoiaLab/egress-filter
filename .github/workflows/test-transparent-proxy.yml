@@ -23,9 +23,20 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install system dependencies
+        # Direct .deb download is ~10x faster than apt-get update + install
+        # Pinned to Ubuntu 24.04 (noble) - update URLs if ubuntu-latest changes
         run: |
-          sudo apt-get -qq update
-          sudo apt-get -qq -o Dpkg::Use-Pty=0 install -y libnetfilter-queue-dev libnfnetlink-dev
+          source /etc/os-release
+          if [[ "$VERSION_ID" != "24.04" ]]; then
+            echo "::error::Expected Ubuntu 24.04, got $VERSION_ID. Update .deb URLs in workflow."
+            exit 1
+          fi
+          base=http://archive.ubuntu.com/ubuntu/pool
+          curl -fsSL --parallel --parallel-immediate \
+            -o /tmp/libnfnetlink-dev.deb $base/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb \
+            -o /tmp/libnetfilter-queue1.deb $base/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb \
+            -o /tmp/libnetfilter-queue-dev.deb $base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb
+          sudo dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb
 
       - name: Install dependencies
         run: uv sync --quiet
