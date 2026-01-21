@@ -85772,16 +85772,18 @@ function checkPlatform() {
     process.exit(1);
   }
 
-  // Check for Ubuntu specifically
-  try {
-    const osRelease = fs.readFileSync('/etc/os-release', 'utf8');
-    if (!osRelease.includes('Ubuntu')) {
-      core.setFailed('This action only supports Ubuntu runners');
-      process.exit(1);
-    }
-  } catch (e) {
-    core.warning('Could not verify Ubuntu, proceeding anyway');
+  const imageOS = process.env.ImageOS;
+  if (!imageOS) {
+    core.setFailed('This action only supports GitHub-hosted runners (ImageOS not set)');
+    process.exit(1);
   }
+
+  if (!imageOS.startsWith('ubuntu')) {
+    core.setFailed(`This action only supports Ubuntu runners, got: ${imageOS}`);
+    process.exit(1);
+  }
+
+  core.info(`Runner image: ${imageOS}`);
 }
 
 function hashFile(filePath) {
@@ -85804,7 +85806,9 @@ async function restoreVenvCache(actionPath) {
   }
 
   const lockHash = hashFile(lockFile);
-  const cacheKey = `egress-filter-venv-${lockHash}`;
+  const imageOS = process.env.ImageOS || 'linux';
+  const arch = process.arch;
+  const cacheKey = `egress-filter-venv-${imageOS}-${arch}-${lockHash}`;
 
   core.saveState('cache-key', cacheKey);
   core.info(`Cache key: ${cacheKey}`);
