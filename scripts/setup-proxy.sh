@@ -14,15 +14,10 @@
 set -e
 
 # Cleanup iptables on failure to avoid breaking runner communication
-cleanup() {
-    sudo iptables -t mangle -F 2>/dev/null || true
-    sudo iptables -t nat -F 2>/dev/null || true
-    sudo iptables -t filter -F 2>/dev/null || true
-    sudo ip6tables -t nat -F 2>/dev/null || true
-}
-trap cleanup ERR
+trap 'sudo "$(dirname "$0")"/iptables.sh cleanup' ERR
 
 # Start unified proxy as root (needed for BPF), exclude root's traffic via iptables
+# shellcheck disable=SC2024  # Redirect to /tmp intentionally uses current user perms
 sudo env PROXY_LOG_FILE=/tmp/proxy.log \
   "$(pwd)"/.venv/bin/python unified_proxy.py > /tmp/proxy-stdout.log 2>&1 &
 PROXY_PID=$!
@@ -43,67 +38,8 @@ while ! sudo ss -tln | grep -q ':8080 '; do
     fi
 done
 
-# Setup iptables - exclude root's traffic to prevent loops
-sudo sysctl -qw net.ipv4.ip_forward=1
-sudo sysctl -qw net.ipv6.conf.all.forwarding=1
-sudo sysctl -qw net.ipv4.conf.all.send_redirects=0
-
-# ===========================================
-# Block direct proxy connections
-# ===========================================
-# Prevent apps from bypassing transparent redirect by connecting
-# directly to the proxy ports. Without this, apps could connect to
-# localhost:8080 or :8053 directly, and we'd lose visibility into
-# the original destination they intended to reach.
-# Mark in mangle (before nat), drop in filter.
-sudo iptables -t mangle -A OUTPUT -p tcp -d 127.0.0.1 --dport 8080 -m owner ! --uid-owner 0 -j MARK --set-mark 1
-sudo iptables -t mangle -A OUTPUT -p udp -d 127.0.0.1 --dport 8053 -m owner ! --uid-owner 0 -j MARK --set-mark 1
-sudo iptables -A OUTPUT -m mark --mark 1 -j DROP
-
-# ===========================================
-# UDP: nfqueue for DNS detection + PID tracking
-# ===========================================
-# Flow:
-#   All UDP → nfqueue (mangle, before NAT)
-#                 ↓
-#           haslayer(DNS)?
-#            /        \
-#          yes         no
-#           ↓           ↓
-#      mark=2        (just log)
-#      cache 4-tuple
-#           ↓
-#      nat: mark=2 → REDIRECT :8053
-#           ↓
-#      mitmproxy
-#
-# Exclude systemd-resolve: it's the system DNS stub resolver that
-# forwards queries to upstream DNS. Must reach network directly.
-sudo iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner systemd-resolve -j RETURN
-# Exclude root (uid 0): mitmproxy runs as root. Without this exclusion,
-# mitmproxy's own DNS queries would loop back through nfqueue → mitmproxy.
-sudo iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner 0 -j RETURN
-# Everything else → nfqueue for inspection
-sudo iptables -t mangle -A OUTPUT -p udp -j NFQUEUE --queue-num 1
-
-# ===========================================
-# TCP: transparent proxy (8080)
-# ===========================================
-# Exclude root: mitmproxy runs as root and makes outbound connections
-# to upstream servers. Without this, infinite redirect loop.
-sudo iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
-sudo iptables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
-# IPv6 (note: blocked by BPF, but keep rules for completeness)
-sudo ip6tables -t nat -A OUTPUT -p tcp -m owner --uid-owner 0 -j RETURN
-sudo ip6tables -t nat -A OUTPUT -p tcp -j REDIRECT --to-port 8080
-
-# ===========================================
-# DNS: redirect marked packets (8053)
-# ===========================================
-# nfqueue inspects UDP packets and sets mark=2 on DNS (by structure,
-# not port - catches DNS on non-standard ports too)
-sudo iptables -t nat -A OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
-sudo ip6tables -t nat -A OUTPUT -p udp -m mark --mark 2 -j REDIRECT --to-port 8053
+# Setup iptables (rules defined in iptables.sh)
+sudo "$(dirname "$0")"/iptables.sh setup
 
 # Install mitmproxy certificate as system CA
 sudo mkdir -p /usr/local/share/ca-certificates/extra

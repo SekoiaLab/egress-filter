@@ -1,5 +1,19 @@
 # TODO
 
+## High Priority
+
+- [ ] Tighten and organize code for readability
+
+## Medium Priority
+
+- [ ] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
+- [ ] Structure as a reusable GitHub Action (node) with pre/post hooks
+
+## Low Priority
+
+- [ ] Disable sudo (backup /etc/sudoers.d/runner, make it empty, restore at end)
+- [ ] Disable docker/containers (disable sudo to prevent reinstall, uninstall docker, nuke files, break socket perms)
+
 ## Done
 
 - [x] DNS PID tracking via kprobe/udp_sendmsg (cgroup hooks don't fire for loopback)

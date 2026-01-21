@@ -1,10 +1,7 @@
 #!/bin/bash
 # Cleanup iptables rules set by setup-proxy.sh
 #
-# Flushes all tables modified by the proxy setup.
+# Delegates to iptables.sh cleanup for single source of truth.
 # Safe to run multiple times.
 
-sudo iptables -t mangle -F 2>/dev/null || true
-sudo iptables -t nat -F 2>/dev/null || true
-sudo iptables -t filter -F 2>/dev/null || true
-sudo ip6tables -t nat -F 2>/dev/null || true
+exec "$(dirname "$0")"/iptables.sh cleanup
