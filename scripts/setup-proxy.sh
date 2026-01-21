@@ -48,7 +48,7 @@ start_proxy() {
 
     # Start unified proxy (exclude root's traffic via iptables to prevent loops)
     env PROXY_LOG_FILE=/tmp/proxy.log \
-        "$REPO_ROOT"/.venv/bin/python unified_proxy.py > /tmp/proxy-stdout.log 2>&1 &
+        "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/unified_proxy.py" > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
     # Wait for proxy to be listening

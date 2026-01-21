@@ -7,7 +7,6 @@
 ## Medium Priority
 
 - [ ] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
-- [ ] Structure as a reusable GitHub Action (node) with pre/post hooks
 
 ## Low Priority
 
@@ -16,6 +15,7 @@
 
 ## Done
 
+- [x] Structure as a reusable GitHub Action (node) with pre/post hooks
 - [x] DNS PID tracking via kprobe/udp_sendmsg (cgroup hooks don't fire for loopback)
 - [x] Add comprehensive tests to workflow for all combinations
 - [x] DNS to external (e.g. 8.8.8.8) - added dns_to_pid map keyed by src_port only
