@@ -26,8 +26,8 @@ tests/               # Test scripts
 
 ## Key Files
 
-- `src/proxy/unified_proxy.py` - mitmproxy addon with BPF-based PID tracking + nfqueue UDP handler
-- `src/bpf/port_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
+- `src/proxy/main.py` - mitmproxy addon with BPF-based PID tracking + nfqueue UDP handler
+- `src/bpf/conn_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
 - `src/scripts/setup-proxy.sh` - Setup transparent proxy with iptables
 - `src/scripts/iptables.sh` - iptables rules management
 - `.github/workflows/test-transparent-proxy.yml` - CI workflow
@@ -37,7 +37,7 @@ tests/               # Test scripts
 1. BPF program attaches to cgroup and tracks TCP connections via `sockops` hook
 2. When a connection is made, BPF records `(dst_ip, src_port, dst_port)` → PID in an LRU hash map
 3. mitmproxy in transparent mode intercepts traffic via iptables REDIRECT
-4. unified_proxy.py looks up the PID from BPF maps for each connection and logs it
+4. The proxy looks up the PID from BPF maps for each connection and logs it
 
 ## Running the Workflow
 
@@ -54,10 +54,10 @@ gh workflow run test-transparent-proxy.yml
 uv sync
 
 # Compile BPF (requires Docker) - output goes to dist/bpf/
-uv run tinybpf docker-compile src/bpf/port_tracker.bpf.c -o dist/bpf/port_tracker.bpf.o
+uv run tinybpf docker-compile src/bpf/conn_tracker.bpf.c -o dist/bpf/conn_tracker.bpf.o
 
 # Run proxy (requires root for BPF)
-sudo .venv/bin/python src/proxy/unified_proxy.py
+sudo .venv/bin/python src/proxy/main.py
 ```
 
 ## BPF Map Structure

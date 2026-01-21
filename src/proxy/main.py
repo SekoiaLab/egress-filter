@@ -60,7 +60,7 @@ LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
 MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
 VERBOSE = os.environ.get("VERBOSE", "0") == "1"
 
-logger = logging.getLogger("unified_proxy")
+logger = logging.getLogger("egress_proxy")
 logger.setLevel(logging.INFO)
 logger.propagate = False
 logger.handlers.clear()
@@ -118,7 +118,7 @@ class SharedState:
         # Default BPF path relative to this script (src/proxy/ -> dist/bpf/)
         if bpf_path is None:
             repo_root = Path(__file__).parent.parent.parent.resolve()
-            bpf_path = str(repo_root / "dist" / "bpf" / "port_tracker.bpf.o")
+            bpf_path = str(repo_root / "dist" / "bpf" / "conn_tracker.bpf.o")
         self.bpf_obj = None
         self.bpf_links = []
         self.map_v4 = None

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 //
-// port_tracker.bpf.c - Track connections to PID mapping for egress firewall
+// conn_tracker.bpf.c - Track connections to PID mapping for egress firewall
 //
 // Provides 4-tuple→PID correlation for mitmproxy to attribute connections
 // to processes. IPv4 only - all IPv6 is blocked to force apps through
