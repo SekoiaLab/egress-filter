@@ -122,9 +122,11 @@ start_proxy() {
     cp "$cert_file" /tmp/mitmproxy-ca-cert.pem
     chmod 644 /tmp/mitmproxy-ca-cert.pem
 
-    # Set CA env vars for subsequent steps
+    # Set CA env vars for subsequent steps (wide CI tool support)
     echo "NODE_EXTRA_CA_CERTS=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
     echo "REQUESTS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+    echo "AWS_CA_BUNDLE=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
+    echo "HEX_CACERTS_PATH=/tmp/mitmproxy-ca-cert.pem" >> "$GITHUB_ENV"
 
     printf "⏱ start_proxy total: %.2fs\n" "$(echo "$(date +%s.%N) - $total_start" | bc)"
 }
