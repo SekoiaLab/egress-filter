@@ -61,6 +61,26 @@ class ConnKeyV4(ctypes.Structure):
     ]
 ```
 
+## Supported Runners
+
+This action only supports **GitHub-hosted Ubuntu runners**. Self-hosted runners are not supported.
+
+Current support:
+- `ubuntu-latest` (currently Ubuntu 24.04, x64)
+
+Planned expansion:
+1. ARM64 runners (ubuntu-24.04-arm)
+2. Previous Ubuntu releases (ubuntu-22.04)
+
+### GitHub Actions Environment Variables
+
+- `ImageOS`: Runner image identifier (e.g., `ubuntu24`, `ubuntu22`). Used for platform detection and cache keys.
+- `process.arch`: Node.js architecture (`x64`, `arm64`). Used in cache keys.
+
+Cache key format: `egress-filter-venv-${ImageOS}-${arch}-${lockHash}`
+
+The `.deb` packages in `setup-proxy.sh` are hardcoded to Ubuntu 24.04 amd64. When adding ARM64 or other Ubuntu versions, these URLs need architecture/version-specific variants.
+
 ## Dependencies
 
 - tinybpf (from git) - BPF loading and map access
