@@ -58,6 +58,7 @@ class ConnKeyV4(ctypes.Structure):
 # Logging setup
 LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
 MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
+VERBOSE = os.environ.get("VERBOSE", "0") == "1"
 
 logger = logging.getLogger("unified_proxy")
 logger.setLevel(logging.INFO)
@@ -66,18 +67,15 @@ logger.handlers.clear()
 _handler = logging.FileHandler(LOG_FILE)
 _handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
 logger.addHandler(_handler)
-# Also log to stderr for debugging
-_stderr = logging.StreamHandler()
-_stderr.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
-logger.addHandler(_stderr)
 
-# Configure mitmproxy's internal logging
-_mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
-_mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
-for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options"]:
-    mlog = logging.getLogger(mlog_name)
-    mlog.setLevel(logging.DEBUG)
-    mlog.addHandler(_mitmproxy_handler)
+# Configure mitmproxy's internal logging (only in verbose mode)
+if VERBOSE:
+    _mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
+    _mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
+    for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options"]:
+        mlog = logging.getLogger(mlog_name)
+        mlog.setLevel(logging.DEBUG)
+        mlog.addHandler(_mitmproxy_handler)
 
 
 def get_comm(pid: int) -> str:

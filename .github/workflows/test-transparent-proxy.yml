@@ -21,6 +21,8 @@ jobs:
 
       - name: Setup egress filter
         uses: gregclermont/egress-filter@main
+        env:
+          VERBOSE: ${{ inputs.verbose && '1' || '0' }}
 
       - name: Run PID tracking tests
         run: ./tests/test_pid_tracking.sh
@@ -30,12 +32,13 @@ jobs:
 
       - name: Show proxy logs
         if: always()
+        env:
+          VERBOSE: ${{ inputs.verbose && '1' || '0' }}
         run: |
-          echo "=== Proxy Log (custom) ==="
+          echo "=== Proxy Log ==="
           cat /tmp/proxy.log || echo "No log file found"
-          echo ""
-          echo "=== Proxy stdout/stderr ==="
-          cat /tmp/proxy-stdout.log || echo "No log file found"
-          echo ""
-          echo "=== Mitmproxy Log (debug) ==="
-          cat /tmp/mitmproxy.log || echo "No log file found"
+          if [ "$VERBOSE" = "1" ] && [ -f /tmp/mitmproxy.log ]; then
+            echo ""
+            echo "=== Mitmproxy Log (verbose) ==="
+            cat /tmp/mitmproxy.log
+          fi

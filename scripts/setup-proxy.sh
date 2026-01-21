@@ -47,7 +47,7 @@ start_proxy() {
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
     # Start unified proxy (exclude root's traffic via iptables to prevent loops)
-    env PROXY_LOG_FILE=/tmp/proxy.log \
+    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" \
         "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/unified_proxy.py" > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
