@@ -2,10 +2,13 @@
 
 ## High Priority
 
+- [ ] Convert connection log to JSONL, ensure only one event logged per connection
+- [ ] Collect process executable path and command line
 - [ ] Tighten and organize code for readability
 
 ## Medium Priority
 
+- [ ] Collect GitHub job step info from process env for the log
 - [ ] Investigate UDP fast path using eBPF TC to mark allowed packets based on 4-tuple and skip nfqueue
 
 ## Low Priority
