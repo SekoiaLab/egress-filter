@@ -27559,19 +27559,23 @@ const core = __nccwpck_require__(7484);
 const exec = __nccwpck_require__(5236);
 const path = __nccwpck_require__(6928);
 
+// Compute action root at runtime (2 levels up from dist/post/)
+// Use array join to prevent ncc from transforming the path
+const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
+
 async function run() {
-  // Action root is 2 levels up from dist/post/
-  const actionPath = path.resolve(__dirname, '..', '..');
+  const actionPath = getActionPath();
+  const scriptsDir = actionPath + path.sep + 'scripts';
   const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
   core.info('Stopping proxy...');
-  await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "setup-proxy.sh", 'stop'], {
+  await exec.exec('sudo', ['-E', scriptsDir + path.sep + 'setup-proxy.sh', 'stop'], {
     ignoreReturnCode: true,
     env
   });
 
   core.info('Cleaning up iptables...');
-  await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "iptables.sh", 'cleanup'], {
+  await exec.exec('sudo', ['-E', scriptsDir + path.sep + 'iptables.sh', 'cleanup'], {
     ignoreReturnCode: true,
     env
   });

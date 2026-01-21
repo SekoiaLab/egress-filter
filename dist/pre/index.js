@@ -27559,20 +27559,23 @@ const core = __nccwpck_require__(7484);
 const exec = __nccwpck_require__(5236);
 const path = __nccwpck_require__(6928);
 
+// Compute action root at runtime (2 levels up from dist/pre/)
+// Use array join to prevent ncc from transforming the path
+const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
+
 async function run() {
   try {
-    // Action root is 2 levels up from dist/pre/
-    const actionPath = path.resolve(__dirname, '..', '..');
-    const setupScript = __nccwpck_require__.ab + "setup-proxy.sh";
+    const actionPath = getActionPath();
+    const setupScript = [actionPath, 'scripts', 'setup-proxy.sh'].join(path.sep);
 
     // Pass action path so script doesn't need to calculate it
     const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
     core.info('Installing dependencies...');
-    await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "setup-proxy.sh", 'install-deps'], { env });
+    await exec.exec('sudo', ['-E', setupScript, 'install-deps'], { env });
 
     core.info('Starting proxy...');
-    await exec.exec('sudo', ['-E', __nccwpck_require__.ab + "setup-proxy.sh", 'start'], { env });
+    await exec.exec('sudo', ['-E', setupScript, 'start'], { env });
 
     core.info('Egress filter proxy is running');
   } catch (error) {
