@@ -11,7 +11,7 @@ set -e
 
 SCRIPT_DIR="$(dirname "$0")"
 # Use EGRESS_FILTER_ROOT if set (from action), otherwise calculate from script location
-REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+REPO_ROOT="${EGRESS_FILTER_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 timer() {
     echo "::group::⏱ $1"
@@ -72,7 +72,7 @@ start_proxy() {
     # Start unified proxy (exclude root's traffic via iptables to prevent loops)
     local start=$(date +%s.%N)
     env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" \
-        "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/unified_proxy.py" > /tmp/proxy-stdout.log 2>&1 &
+        "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/src/proxy/unified_proxy.py" > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
     # Wait for proxy to be listening

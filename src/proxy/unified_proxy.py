@@ -115,10 +115,10 @@ class SharedState:
     """Shared state between mitmproxy addon and nfqueue handler."""
 
     def __init__(self, bpf_path: str | None = None):
-        # Default BPF path relative to this script
+        # Default BPF path relative to this script (src/proxy/ -> dist/bpf/)
         if bpf_path is None:
-            script_dir = Path(__file__).parent.resolve()
-            bpf_path = str(script_dir / "src" / "bpf" / "port_tracker.bpf.o")
+            repo_root = Path(__file__).parent.parent.parent.resolve()
+            bpf_path = str(repo_root / "dist" / "bpf" / "port_tracker.bpf.o")
         self.bpf_obj = None
         self.bpf_links = []
         self.map_v4 = None

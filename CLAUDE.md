@@ -10,13 +10,26 @@ At the start of each session, read and display the contents of `TODO.md` to remi
 
 eBPF-based connection-to-PID tracker integrated with mitmproxy transparent proxy. Attributes every network connection to the process that made it.
 
+## File Structure
+
+```
+src/
+├── action/          # GitHub Action JS code (pre/main/post hooks)
+├── bpf/             # BPF C source
+├── proxy/           # Python proxy code
+└── scripts/         # Shell scripts (setup, iptables)
+dist/
+├── pre/main/post/   # Compiled JS bundles
+└── bpf/             # Compiled BPF object
+tests/               # Test scripts
+```
+
 ## Key Files
 
-- `unified_proxy.py` - mitmproxy addon with BPF-based PID tracking + nfqueue UDP handler
+- `src/proxy/unified_proxy.py` - mitmproxy addon with BPF-based PID tracking + nfqueue UDP handler
 - `src/bpf/port_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
-- `scripts/setup-proxy.sh` - Setup transparent proxy with iptables
-- `scripts/test-connectivity.sh` - Basic connectivity tests
-- `scripts/cleanup-iptables.sh` - Cleanup iptables rules
+- `src/scripts/setup-proxy.sh` - Setup transparent proxy with iptables
+- `src/scripts/iptables.sh` - iptables rules management
 - `.github/workflows/test-transparent-proxy.yml` - CI workflow
 
 ## How It Works
@@ -40,11 +53,11 @@ gh workflow run test-transparent-proxy.yml
 # Install dependencies
 uv sync
 
-# Compile BPF (requires Docker)
-uv run tinybpf docker-compile src/bpf/port_tracker.bpf.c
+# Compile BPF (requires Docker) - output goes to dist/bpf/
+uv run tinybpf docker-compile src/bpf/port_tracker.bpf.c -o dist/bpf/port_tracker.bpf.o
 
 # Run proxy (requires root for BPF)
-sudo .venv/bin/python unified_proxy.py
+sudo .venv/bin/python src/proxy/unified_proxy.py
 ```
 
 ## BPF Map Structure
@@ -79,7 +92,7 @@ Planned expansion:
 
 Cache key format: `egress-filter-venv-${ImageOS}-${arch}-${lockHash}`
 
-The `.deb` packages in `setup-proxy.sh` are hardcoded to Ubuntu 24.04 amd64. When adding ARM64 or other Ubuntu versions, these URLs need architecture/version-specific variants.
+The `.deb` packages in `src/scripts/setup-proxy.sh` are hardcoded to Ubuntu 24.04 amd64. When adding ARM64 or other Ubuntu versions, these URLs need architecture/version-specific variants.
 
 ## Dependencies
 

@@ -44,7 +44,7 @@ async function saveVenvCache(actionPath) {
 
 async function run() {
   const actionPath = getActionPath();
-  const scriptsDir = path.join(actionPath, 'scripts');
+  const scriptsDir = path.join(actionPath, 'src', 'scripts');
   const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
   // IMPORTANT: Clean iptables FIRST, before stopping proxy
