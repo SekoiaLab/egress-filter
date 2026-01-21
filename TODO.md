@@ -13,6 +13,11 @@
 
 ## Low Priority
 
+- [ ] Review main.py: remove unused/unnecessary code, reorder for readability, consider splitting into multiple files
+- [ ] setup/proxy.sh: consider combining the two waiting loops (port 8080 and CA certificate) into one
+- [ ] Check if we need both UDP BPF handlers; add comment explaining why we track loopback for UDP; investigate if needed for TCP
+- [ ] Consider moving package.json / package-lock.json to src/action/
+- [ ] Consider moving python package management files to src/proxy/
 - [ ] Disable sudo (backup /etc/sudoers.d/runner, make it empty, restore at end)
 - [ ] Disable docker/containers (disable sudo to prevent reinstall, uninstall docker, nuke files, break socket perms)
 
