@@ -56,6 +56,8 @@ class ConnKeyV4(ctypes.Structure):
 
 # Logging setup
 LOG_FILE = os.environ.get("PROXY_LOG_FILE", "/tmp/proxy.log")
+MITMPROXY_LOG_FILE = os.environ.get("MITMPROXY_LOG_FILE", "/tmp/mitmproxy.log")
+
 logger = logging.getLogger("unified_proxy")
 logger.setLevel(logging.INFO)
 logger.propagate = False
@@ -67,6 +69,14 @@ logger.addHandler(_handler)
 _stderr = logging.StreamHandler()
 _stderr.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
 logger.addHandler(_stderr)
+
+# Configure mitmproxy's internal logging
+_mitmproxy_handler = logging.FileHandler(MITMPROXY_LOG_FILE)
+_mitmproxy_handler.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s'))
+for mlog_name in ["mitmproxy", "mitmproxy.proxy", "mitmproxy.options"]:
+    mlog = logging.getLogger(mlog_name)
+    mlog.setLevel(logging.DEBUG)
+    mlog.addHandler(_mitmproxy_handler)
 
 
 def get_comm(pid: int) -> str:
