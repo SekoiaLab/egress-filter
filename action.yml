@@ -1,0 +1,13 @@
+name: 'Egress Filter'
+description: 'Transparent proxy with eBPF-based PID tracking for monitoring network egress'
+author: 'gregclermont'
+
+runs:
+  using: 'node20'
+  pre: 'dist/pre/index.js'
+  main: 'dist/main/index.js'
+  post: 'dist/post/index.js'
+
+branding:
+  icon: 'shield'
+  color: 'blue'

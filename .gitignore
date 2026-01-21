@@ -4,8 +4,9 @@ __pycache__/
 *.so
 .venv/
 
-# BPF compiled objects (built by workflow)
-*.bpf.o
+# Node
+node_modules/
+dist/
 
 # IDE
 .idea/

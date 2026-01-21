@@ -19,60 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Install system dependencies
-        # Direct .deb download is ~10x faster than apt-get update + install
-        # Pinned to Ubuntu 24.04 (noble) - update URLs if ubuntu-latest changes
-        run: |
-          source /etc/os-release
-          if [[ "$VERSION_ID" != "24.04" ]]; then
-            echo "::error::Expected Ubuntu 24.04, got $VERSION_ID. Update .deb URLs in workflow."
-            exit 1
-          fi
-          base=http://archive.ubuntu.com/ubuntu/pool
-          curl -fsSL --parallel --parallel-immediate \
-            -o /tmp/libnfnetlink-dev.deb $base/main/libn/libnfnetlink/libnfnetlink-dev_1.0.2-2build1_amd64.deb \
-            -o /tmp/libnetfilter-queue1.deb $base/universe/libn/libnetfilter-queue/libnetfilter-queue1_1.0.5-4build1_amd64.deb \
-            -o /tmp/libnetfilter-queue-dev.deb $base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb
-          sudo dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Cache BPF objects
-        id: bpf-cache
-        uses: actions/cache@v4
-        with:
-          path: src/bpf/*.bpf.o
-          key: bpf-${{ hashFiles('src/bpf/*.bpf.c') }}
-
-      - name: Compile BPF programs
-        if: steps.bpf-cache.outputs.cache-hit != 'true'
-        run: |
-          docker run --rm -v "$(pwd)":/src ghcr.io/gregclermont/tinybpf-compile src/bpf/port_tracker.bpf.c
-
-      - name: Setup transparent proxy
-        run: sudo ./scripts/setup-proxy.sh
+      - name: Setup egress filter
+        uses: ./
 
       - name: Run PID tracking tests
         run: ./tests/test_pid_tracking.sh
         env:
           PROXY_LOG_FILE: /tmp/proxy.log
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
-
-      - name: Stop proxy gracefully
-        if: always()
-        run: |
-          sudo pkill -TERM -f "python unified_proxy.py" || true
-          sleep 2
-
-      - name: Cleanup iptables
-        if: always()
-        run: sudo ./scripts/iptables.sh cleanup
 
       - name: Show proxy logs
         if: always()
