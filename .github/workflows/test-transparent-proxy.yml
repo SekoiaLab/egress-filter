@@ -17,12 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-
       - name: Setup egress filter
         uses: gregclermont/egress-filter@main
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+
+      - uses: actions/checkout@v4
 
       - name: Run PID tracking tests
         run: ./tests/test_pid_tracking.sh
