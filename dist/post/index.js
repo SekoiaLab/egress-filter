@@ -85801,21 +85801,26 @@ async function saveVenvCache(actionPath) {
 async function run() {
   const actionPath = getActionPath();
   const setupDir = path.join(actionPath, 'src', 'setup');
-  const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
+
+  // Build environment variables to pass through sudo.
+  // We exclude HOME so that root uses its own home directory (/root).
+  // We use 'sudo env VAR=value ...' because sudo doesn't pass env vars by default.
+  const sudoEnv = [
+    `PATH=${process.env.PATH}`,
+    `EGRESS_FILTER_ROOT=${actionPath}`,
+  ];
 
   // IMPORTANT: Clean iptables FIRST, before stopping proxy
   // Otherwise traffic is still redirected to port 8080 after proxy dies,
   // which breaks runner communication with GitHub (jobs appear stuck)
   core.info('Cleaning up iptables...');
-  await exec.exec('sudo', ['-E', path.join(setupDir, 'iptables.sh'), 'cleanup'], {
+  await exec.exec('sudo', ['env', ...sudoEnv, path.join(setupDir, 'iptables.sh'), 'cleanup'], {
     ignoreReturnCode: true,
-    env
   });
 
   core.info('Stopping proxy...');
-  await exec.exec('sudo', ['-E', path.join(setupDir, 'proxy.sh'), 'stop'], {
+  await exec.exec('sudo', ['env', ...sudoEnv, path.join(setupDir, 'proxy.sh'), 'stop'], {
     ignoreReturnCode: true,
-    env
   });
 
   // Save cache after cleanup

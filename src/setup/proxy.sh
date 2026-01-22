@@ -29,10 +29,10 @@ install_deps() {
         -o /tmp/libnetfilter-queue-dev.deb "$base/universe/libn/libnetfilter-queue/libnetfilter-queue-dev_1.0.5-4build1_amd64.deb"
     dpkg -i /tmp/libnfnetlink-dev.deb /tmp/libnetfilter-queue1.deb /tmp/libnetfilter-queue-dev.deb >/dev/null
 
-    # Install uv if not present
+    # Install uv if not present (uv installs to ~/.local/bin which is /root/.local/bin when running as root)
     if ! command -v uv &>/dev/null; then
         curl -LsSf https://astral.sh/uv/install.sh | UV_PRINT_QUIET=1 sh
-        export PATH="$HOME/.local/bin:$PATH"
+        export PATH="/root/.local/bin:$PATH"
     fi
 
     # Install Python dependencies
@@ -70,8 +70,8 @@ start_proxy() {
     # Setup iptables
     "$SCRIPT_DIR"/iptables.sh setup
 
-    # Wait for mitmproxy to generate its CA certificate
-    local mitmproxy_dir="$HOME/.mitmproxy"
+    # Wait for mitmproxy to generate its CA certificate (runs as root, so uses /root/.mitmproxy)
+    local mitmproxy_dir="/root/.mitmproxy"
     local cert_file="$mitmproxy_dir/mitmproxy-ca-cert.pem"
     local cert_counter=0
     while [ ! -f "$cert_file" ]; do

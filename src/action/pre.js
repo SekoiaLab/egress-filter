@@ -76,16 +76,26 @@ async function run() {
 
     const actionPath = getActionPath();
     const setupScript = path.join(actionPath, 'src', 'setup', 'proxy.sh');
-    const env = { ...process.env, EGRESS_FILTER_ROOT: actionPath };
 
     // Try to restore .venv from cache
     await restoreVenvCache(actionPath);
 
+    // Build environment variables to pass through sudo.
+    // We exclude HOME so that root uses its own home directory (/root),
+    // preventing cache/config directories from being created as root-owned
+    // in /home/runner (which breaks pip/poetry/etc for subsequent steps).
+    // We use 'sudo env VAR=value ...' because sudo doesn't pass env vars by default.
+    const sudoEnv = [
+      `PATH=${process.env.PATH}`,
+      `GITHUB_ENV=${process.env.GITHUB_ENV}`,
+      `EGRESS_FILTER_ROOT=${actionPath}`,
+    ];
+
     core.info('Installing dependencies...');
-    await exec.exec('sudo', ['-E', setupScript, 'install-deps'], { env });
+    await exec.exec('sudo', ['env', ...sudoEnv, setupScript, 'install-deps']);
 
     core.info('Starting proxy...');
-    await exec.exec('sudo', ['-E', setupScript, 'start'], { env });
+    await exec.exec('sudo', ['env', ...sudoEnv, setupScript, 'start']);
 
     core.info('Egress filter proxy is running');
   } catch (error) {
