@@ -208,11 +208,24 @@ fi
 log ""
 log "### UDP Tests (non-DNS) ###"
 
+# Unconnected UDP (sendto with destination in msg_name)
 run_test "UDP to external (port 9999)" "PASS" \
     nc -u -z -w 2 8.8.8.8 9999
 
 run_test "UDP to external (port 12345)" "PASS" \
     nc -u -z -w 2 8.8.8.8 12345
+
+# UDP to loopback (non-DNS) - tests kprobe loopback path for non-53 ports
+run_test "UDP to loopback (non-DNS)" "PASS" \
+    python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.sendto(b'test', ('127.0.0.1', 19999))"
+
+# Connected UDP socket - tests kprobe connected path (destination in socket, not msg_name)
+run_test "UDP via connected socket" "PASS" \
+    python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('8.8.8.8', 9999)); s.send(b'test')"
+
+# UDP IPv6 (should be blocked by cgroup/sendmsg6)
+run_test "UDP/IPv6 (blocked)" "FAIL" \
+    python3 -c "import socket; s=socket.socket(socket.AF_INET6, socket.SOCK_DGRAM); s.sendto(b'test', ('2001:4860:4860::8888', 9999))"
 
 # ============================================
 # Edge Cases
