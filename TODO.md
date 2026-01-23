@@ -20,6 +20,7 @@
 - [ ] Consider moving python package management files to src/proxy/
 - [ ] Disable sudo (backup /etc/sudoers.d/runner, make it empty, restore at end)
 - [ ] Disable docker/containers (disable sudo to prevent reinstall, uninstall docker, nuke files, break socket perms)
+- [ ] Test how the proxy handles traffic from docker containers
 
 ## Done
 
