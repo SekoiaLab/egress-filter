@@ -47,8 +47,8 @@ start_proxy() {
     trap '"$SCRIPT_DIR"/iptables.sh cleanup' ERR
 
     # Start proxy (exclude root's traffic via iptables to prevent loops)
-    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" \
-        "$REPO_ROOT"/.venv/bin/python "$REPO_ROOT/src/proxy/main.py" > /tmp/proxy-stdout.log 2>&1 &
+    env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
+        "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
     local proxy_pid=$!
 
     # Wait for proxy to be listening
