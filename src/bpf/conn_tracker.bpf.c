@@ -94,8 +94,16 @@ int handle_sockops(struct bpf_sock_ops *skops) {
 }
 
 // ============================================
-// UDP: kprobe (works for loopback too)
+// UDP: kprobe
 // ============================================
+// We use kprobe instead of the simpler cgroup/sendmsg4 hook because
+// cgroup hooks don't fire for loopback destinations (127.0.0.0/8).
+// DNS queries to systemd-resolved (127.0.0.53) would be missed.
+//
+// The kprobe fires system-wide (not just our cgroup), but the overhead
+// is negligible: most UDP is from job processes anyway, and extra map
+// entries for system services are harmless (LRU-evicted, never queried
+// since iptables filters by uid before packets reach nfqueue).
 
 SEC("kprobe/udp_sendmsg")
 int kprobe_udp_sendmsg(struct pt_regs *ctx) {
@@ -105,90 +113,46 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
     if (!sk)
         return 0;
 
+    // Only track IPv4 (IPv6 is blocked by cgroup/sendmsg6)
+    u16 family;
+    BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
+    if (family != AF_INET)
+        return 0;
+
     u16 src_port;
     BPF_CORE_READ_INTO(&src_port, sk, __sk_common.skc_num);
     if (src_port == 0)
         return 0;
 
-    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    u32 dst_ip = 0;
+    u16 dst_port = 0;
 
-    // Try to get destination from msg_name first (unconnected sends)
-    struct sockaddr *addr = NULL;
+    // Get destination from msg_name (unconnected) or socket (connected)
+    struct sockaddr_in *sin = NULL;
     if (msg)
-        BPF_CORE_READ_INTO(&addr, msg, msg_name);
+        BPF_CORE_READ_INTO(&sin, msg, msg_name);
 
-    if (addr) {
-        // Unconnected UDP: destination is in msg_name
-        u16 family;
-        bpf_probe_read_kernel(&family, sizeof(family), &addr->sa_family);
-
-        if (family == AF_INET) {
-            struct sockaddr_in *sin = (struct sockaddr_in *)addr;
-            u32 dst_ip;
-            u16 dst_port;
-            bpf_probe_read_kernel(&dst_ip, sizeof(dst_ip), &sin->sin_addr.s_addr);
-            bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &sin->sin_port);
-
-            struct conn_key_v4 key = {
-                .dst_ip = dst_ip,
-                .src_port = src_port,
-                .dst_port = bpf_ntohs(dst_port),
-                .protocol = IPPROTO_UDP,
-            };
-            bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-        }
-        // IPv6 ignored - blocked by cgroup/sendmsg6
+    if (sin) {
+        bpf_probe_read_kernel(&dst_ip, sizeof(dst_ip), &sin->sin_addr.s_addr);
+        bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &sin->sin_port);
     } else {
-        // Connected UDP: destination is in the socket
-        u16 family;
-        BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
-
-        if (family == AF_INET) {
-            u32 dst_ip;
-            u16 dst_port;
-            BPF_CORE_READ_INTO(&dst_ip, sk, __sk_common.skc_daddr);
-            BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
-
-            if (dst_ip == 0)
-                return 0;
-
-            struct conn_key_v4 key = {
-                .dst_ip = dst_ip,
-                .src_port = src_port,
-                .dst_port = bpf_ntohs(dst_port),
-                .protocol = IPPROTO_UDP,
-            };
-            bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-        }
-        // IPv6 ignored - blocked by cgroup/sendmsg6
+        BPF_CORE_READ_INTO(&dst_ip, sk, __sk_common.skc_daddr);
+        BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
     }
 
-    return 0;
-}
-
-// ============================================
-// UDP: sendmsg4 (cgroup, for non-loopback)
-// ============================================
-
-SEC("cgroup/sendmsg4")
-int handle_sendmsg4(struct bpf_sock_addr *ctx) {
-    struct bpf_sock *sk = ctx->sk;
-    if (!sk)
-        return 1;
-
-    u16 src_port = sk->src_port;
-    if (src_port == 0)
-        return 1;
+    if (dst_ip == 0)
+        return 0;
 
     struct conn_key_v4 key = {
-        .dst_ip = ctx->user_ip4,
+        .dst_ip = dst_ip,
         .src_port = src_port,
-        .dst_port = bpf_ntohs(ctx->user_port),
+        .dst_port = bpf_ntohs(dst_port),
         .protocol = IPPROTO_UDP,
     };
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     bpf_map_update_elem(&conn_to_pid_v4, &key, &pid, BPF_ANY);
-    return 1;
+
+    return 0;
 }
 
 char LICENSE[] SEC("license") = "GPL";

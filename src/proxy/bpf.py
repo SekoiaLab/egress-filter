@@ -46,9 +46,8 @@ class BPFState:
         self.bpf_obj = tinybpf.load(self.bpf_path)
         self.bpf_obj.__enter__()
 
-        # IPv4 tracking
+        # IPv4 tracking: TCP via cgroup sockops, UDP via kprobe
         self.bpf_links.append(self.bpf_obj.program("handle_sockops").attach_cgroup(cgroup))
-        self.bpf_links.append(self.bpf_obj.program("handle_sendmsg4").attach_cgroup(cgroup))
         self.bpf_links.append(self.bpf_obj.program("kprobe_udp_sendmsg").attach_kprobe("udp_sendmsg"))
 
         # IPv6 blocking (forces apps to use IPv4, which goes through transparent proxy)
