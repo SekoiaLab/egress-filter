@@ -19,7 +19,7 @@
 
 - [x] Review main.py: remove unused/unnecessary code, reorder for readability, consider splitting into multiple files
 - [x] Check if we need both UDP BPF handlers; add comment explaining why we track loopback for UDP; investigate if needed for TCP
-- [ ] Disable sudo (backup /etc/sudoers.d/runner, make it empty, restore at end)
+- [x] Disable sudo (backup /etc/sudoers.d/runner, make it empty, restore at end)
 - [ ] Disable docker/containers (disable sudo to prevent reinstall, uninstall docker, nuke files, break socket perms)
 - [x] Test how the proxy handles traffic from docker containers
   - Bridge mode (default): bypasses proxy (container's network namespace)
