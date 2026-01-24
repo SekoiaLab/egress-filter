@@ -32,7 +32,6 @@ class MitmproxyAddon:
                 dst_ip=dst_ip,
                 dst_port=dst_port,
                 host=sni,
-                container=True,
                 **get_proc_info(pid),
                 src_port=src_port,
                 pid=pid,
