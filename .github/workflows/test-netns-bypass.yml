@@ -124,6 +124,26 @@ jobs:
           echo "3. Inside a new netns, there are NO iptables rules:"
           sudo unshare --net iptables -t nat -L -n || echo "(iptables may not work in empty netns)"
 
+      # Test if Docker still works with unprivileged_userns_clone=0
+      - name: Test Docker with sysctl disabled
+        run: |
+          echo "=== Testing Docker with unprivileged_userns_clone=0 ==="
+
+          echo "1. Disable unprivileged user namespaces:"
+          sudo sysctl -w kernel.unprivileged_userns_clone=0
+
+          echo ""
+          echo "2. Try to run a Docker container:"
+          docker run --rm alpine echo "SUCCESS: Docker works with unprivileged_userns_clone=0"
+
+          echo ""
+          echo "3. Docker with network:"
+          docker run --rm alpine ping -c 1 8.8.8.8 || echo "Network test done"
+
+          echo ""
+          echo "4. Re-enable for cleanup:"
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+
       - name: Show proxy logs
         if: always()
         run: |
