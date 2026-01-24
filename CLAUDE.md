@@ -39,14 +39,16 @@ tests/               # Test scripts
 - `src/proxy/handlers/` - protocol-specific connection handling
 - `src/bpf/conn_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
 - `src/setup/proxy.sh` - proxy lifecycle (install deps, start, stop)
+- `src/setup/iptables.sh` - iptables rules for traffic redirection
 - `.github/workflows/test-transparent-proxy.yml` - CI workflow
 
 ## How It Works
 
-1. BPF program attaches to cgroup and tracks TCP connections via `sockops` hook
-2. When a connection is made, BPF records `(dst_ip, src_port, dst_port)` → PID in an LRU hash map
-3. mitmproxy in transparent mode intercepts traffic via iptables REDIRECT
-4. The proxy looks up the PID from BPF maps for each connection and logs it
+1. BPF kprobes (`tcp_connect`, `udp_sendmsg`) record `(dst_ip, src_port, dst_port, protocol)` → PID in an LRU hash map
+2. BPF cgroup hooks (`connect6`, `sendmsg6`) block all IPv6 to force traffic through the IPv4 proxy
+3. iptables redirects TCP to mitmproxy (:8080), UDP goes through nfqueue for DNS detection
+4. DNS packets are redirected to mitmproxy DNS mode (:8053), other UDP is logged directly
+5. The proxy looks up the PID from BPF maps for each connection and logs it with process info
 
 ## Running the Workflow
 
@@ -107,7 +109,9 @@ The `.deb` packages in `src/setup/proxy.sh` are hardcoded to Ubuntu 24.04 amd64.
 
 ## Dependencies
 
-- tinybpf (from git) - BPF loading and map access
-- mitmproxy - transparent proxy
+- tinybpf (from custom index) - BPF loading and map access
+- mitmproxy - transparent proxy (HTTP/HTTPS/TCP/DNS)
+- netfilterqueue - UDP packet interception via nfqueue
+- scapy - packet parsing for DNS detection
 
 See `pyproject.toml` for full dependency list.
