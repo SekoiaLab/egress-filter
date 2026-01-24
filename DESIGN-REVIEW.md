@@ -194,13 +194,12 @@ This document compares the original design (`gha-egress-firewall-design.md`) wit
 
 #### Research completed
 
-- [ ] **Block raw sockets (SOCK_RAW)** - FEASIBLE via capsh
+- [x] **Block raw sockets (SOCK_RAW)** - IMPLEMENTED via cgroup/sock_create
   - **Finding:** CAP_NET_RAW is available on GHA runners - all raw socket types work
   - **Risk:** AF_PACKET sockets completely bypass iptables (can craft packets at Ethernet layer)
-  - **Solution:** `capsh --drop=cap_net_raw` successfully blocks raw sockets
-  - **Verified:** Normal network operations (curl, etc.) still work without CAP_NET_RAW
-  - **Implementation:** Wrap user commands with capsh, or use systemd CapabilityBoundingSet
-  - See: `experiments/raw_socket_bypass/` for test scripts
+  - **Solution:** `cgroup/sock_create` BPF hook blocks SOCK_RAW and AF_PACKET
+  - **Verified:** Normal network operations (curl, etc.) still work
+  - See: `experiments/raw_socket_bypass/` for test scripts, PR #8
 
 - [x] **eBPF LSM hooks** - NOT AVAILABLE on GHA runners
   - **Finding:** BPF not in active LSMs: `lockdown,capability,landlock,yama,apparmor,ima,evm`
@@ -214,13 +213,8 @@ This document compares the original design (`gha-egress-firewall-design.md`) wit
 
 - [ ] **Block network namespace creation**
   - `unshare(CLONE_NEWNET)` creates netns where iptables rules don't apply
-  - Options: seccomp to block `unshare`/`clone` with CLONE_NEWNET
+  - Options: seccomp to block `unshare`/`clone` with CLONE_NEWNET, or BPF hook
   - Ties into "disable containers" (Docker uses netns)
-
-- [ ] **cgroup/sock_create hook** for raw socket blocking
-  - Alternative to capsh approach
-  - Can filter by socket type, family, protocol at kernel level
-  - Already have cgroup BPF infrastructure in place
 
 ### Phase 6: Convenience Features
 
