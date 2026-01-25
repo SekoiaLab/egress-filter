@@ -27,6 +27,7 @@ except ImportError:
 
 from parsimonious.exceptions import ParseError
 
+from .defaults import PRESETS, get_defaults
 from .dns_cache import DNSIPCache
 from .enforcer import PolicyEnforcer, ProcessInfo
 from .matcher import ConnectionEvent, PolicyMatcher
@@ -274,6 +275,18 @@ def main():
         metavar="CONNECTIONS.jsonl",
         help="Analyze a connections log against the policy (test before deploying)",
     )
+    parser.add_argument(
+        "--include-defaults",
+        action="store_true",
+        help="Include GitHub Actions infrastructure defaults (local DNS, git, actions runner)",
+    )
+    parser.add_argument(
+        "--include-preset",
+        action="append",
+        metavar="NAME",
+        choices=list(PRESETS.keys()),
+        help=f"Include a preset policy. Available: {', '.join(PRESETS.keys())}",
+    )
 
     args = parser.parse_args()
 
@@ -307,11 +320,26 @@ def main():
 
     # Handle --dump-rules mode
     if args.dump_rules:
+        # Build combined policy from defaults, presets, and workflow policies
+        policy_parts = []
+
+        if args.include_defaults:
+            policy_parts.append(get_defaults())
+
+        if args.include_preset:
+            for preset_name in args.include_preset:
+                preset = PRESETS.get(preset_name)
+                if preset:
+                    policy_parts.append(preset)
+
+        for _, policy_text in policies:
+            policy_parts.append(policy_text)
+
+        combined_policy = "\n".join(policy_parts)
+
         all_rules = []
-        for location, policy_text in policies:
-            rules = parse_policy(policy_text)
-            for rule in rules:
-                all_rules.append(rule_to_dict(rule))
+        for rule in parse_policy(combined_policy):
+            all_rules.append(rule_to_dict(rule))
         print(json.dumps(all_rules, indent=2))
         sys.exit(0)
 
@@ -321,8 +349,25 @@ def main():
             print(f"Error: Log file not found: {args.analyze_log}", file=sys.stderr)
             sys.exit(2)
 
-        # Combine all policies (usually just one)
-        combined_policy = "\n".join(policy_text for _, policy_text in policies)
+        # Build combined policy from defaults, presets, and workflow policies
+        policy_parts = []
+
+        # Include defaults if requested
+        if args.include_defaults:
+            policy_parts.append(get_defaults())
+
+        # Include presets if requested
+        if args.include_preset:
+            for preset_name in args.include_preset:
+                preset = PRESETS.get(preset_name)
+                if preset:
+                    policy_parts.append(preset)
+
+        # Add workflow policies
+        for _, policy_text in policies:
+            policy_parts.append(policy_text)
+
+        combined_policy = "\n".join(policy_parts)
 
         # Load connections
         connections = load_connections_log(args.analyze_log)

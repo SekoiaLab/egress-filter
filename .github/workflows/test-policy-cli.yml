@@ -261,7 +261,39 @@ jobs:
           fi
           echo "PASS: Correctly detected invalid syntax"
 
-      # Test 7: URL and path rules
+      # Test 7: Analyze with --include-defaults
+      - name: "Test: Analyze with --include-defaults (minimal user policy)"
+        run: |
+          cat > defaults-workflow.yml << 'EOF'
+          name: Test
+          on: push
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: owner/egress-filter@v1
+                  with:
+                    policy: |
+                      # Minimal user policy - only allow example.com and test UDP
+                      # Let --include-defaults handle GitHub infrastructure
+                      example.com
+                      [:*/udp]
+                      8.8.8.8
+          EOF
+
+          echo "=== Analysis with --include-defaults ==="
+          PYTHONPATH=src python -m proxy.policy defaults-workflow.yml --analyze-log connections.jsonl --include-defaults -v
+          exit_code=$?
+
+          if [ $exit_code -ne 0 ]; then
+            echo ""
+            echo "ERROR: Expected exit code 0 with --include-defaults, got $exit_code"
+            echo "This likely means the defaults need to be updated to cover more GHA infrastructure"
+            exit 1
+          fi
+          echo "PASS: --include-defaults covered all GitHub infrastructure connections"
+
+      # Test 8: URL and path rules
       - name: "Test: URL and path rule parsing"
         run: |
           cat > url-workflow.yml << 'EOF'

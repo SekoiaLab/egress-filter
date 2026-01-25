@@ -426,5 +426,124 @@ class TestDumpRules:
         assert len(parsed) == 2
 
 
+class TestDefaultsIntegration:
+    """Tests for --include-defaults and --include-preset flags."""
+
+    def test_analyze_with_defaults_allows_local_dns(self):
+        """--include-defaults should allow local DNS resolver."""
+        from proxy.policy.defaults import get_defaults
+
+        # Empty user policy - only defaults
+        policy = get_defaults()
+
+        connections = [
+            {
+                "type": "dns",
+                "dst_ip": "127.0.0.53",
+                "dst_port": 53,
+                "name": "github.com",
+                "exe": "/usr/bin/curl",
+            }
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 0
+
+    def test_analyze_with_defaults_allows_git_to_github(self):
+        """--include-defaults should allow git-remote to github.com."""
+        from proxy.policy.defaults import get_defaults
+
+        policy = get_defaults()
+
+        connections = [
+            {
+                "type": "http",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+                "url": "https://github.com/owner/repo/info/refs",
+                "method": "GET",
+                "exe": "/usr/lib/git-core/git-remote-https",
+            }
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 0
+
+    def test_analyze_with_defaults_blocks_curl_to_github(self):
+        """--include-defaults should block curl to github.com (no exe match)."""
+        from proxy.policy.defaults import get_defaults
+
+        policy = get_defaults()
+
+        connections = [
+            {
+                "type": "http",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+                "url": "https://github.com/owner/repo",
+                "method": "GET",
+                "exe": "/usr/bin/curl",
+            }
+        ]
+        results = analyze_connections(policy, connections)
+
+        # Blocked because curl doesn't match exe pattern for git rules
+        assert len(results["allowed"]) == 0
+        assert len(results["blocked"]) == 1
+
+    def test_analyze_with_docker_preset(self):
+        """--include-preset=docker should allow dockerd to registries."""
+        from proxy.policy.defaults import DOCKER_PRESET
+
+        policy = DOCKER_PRESET
+
+        connections = [
+            {
+                "type": "http",
+                "dst_ip": "52.72.142.170",
+                "dst_port": 443,
+                "url": "https://registry-1.docker.io/v2/",
+                "method": "GET",
+                "exe": "/usr/bin/dockerd",
+            }
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 0
+
+    def test_combined_defaults_and_user_policy(self):
+        """User policy should extend defaults."""
+        from proxy.policy.defaults import get_defaults
+
+        # User policy allows example.com
+        combined_policy = get_defaults() + "\nexample.com\n"
+
+        connections = [
+            # Default rule allows local DNS
+            {
+                "type": "dns",
+                "dst_ip": "127.0.0.53",
+                "dst_port": 53,
+                "name": "example.com",
+            },
+            # User rule allows example.com
+            {
+                "type": "http",
+                "dst_ip": "93.184.216.34",
+                "dst_port": 443,
+                "url": "https://example.com/",
+                "method": "GET",
+                "exe": "/usr/bin/curl",
+            },
+        ]
+        results = analyze_connections(combined_policy, connections)
+
+        assert len(results["allowed"]) == 2
+        assert len(results["blocked"]) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
