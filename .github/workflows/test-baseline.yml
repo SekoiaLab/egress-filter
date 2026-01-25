@@ -19,11 +19,15 @@ jobs:
         with:
           # Empty policy - block everything, log what's needed
           policy: ""
+          audit: true
+
+      - name: Checkout (audit mode)
+        uses: actions/checkout@v4
 
       - name: Baseline test (no network)
         run: |
           echo "Starting baseline test..."
-          sleep 5
+          sleep 2
           echo "Baseline test complete."
 
       - name: Show connection events
