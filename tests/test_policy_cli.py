@@ -9,7 +9,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from proxy.policy.cli import find_policies_in_workflow, validate_policy
+from proxy.policy.cli import (
+    analyze_connections,
+    connection_key,
+    find_policies_in_workflow,
+    format_connection,
+    validate_policy,
+)
 from proxy.policy.parser import parse_policy, rule_to_dict
 
 
@@ -166,6 +172,176 @@ class TestValidatePolicy:
         """
         errors = validate_policy(policy)
         assert len(errors) == 0
+
+
+class TestAnalyzeConnections:
+    """Tests for connection log analysis."""
+
+    def test_analyze_allowed_connections(self):
+        """Connections matching policy are allowed."""
+        policy = """
+        github.com
+        *.github.com
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.5",
+                "dst_port": 443,
+                "host": "api.github.com",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 2
+        assert len(results["blocked"]) == 0
+
+    def test_analyze_blocked_connections(self):
+        """Connections not matching policy are blocked."""
+        policy = """
+        github.com
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+            {"type": "https", "dst_ip": "5.6.7.8", "dst_port": 443, "host": "evil.com"},
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 1
+
+    def test_analyze_deduplicates_connections(self):
+        """Duplicate connections are counted but not repeated."""
+        policy = """
+        github.com
+        """
+        connections = [
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+            {
+                "type": "https",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+                "host": "github.com",
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 1
+        # Check count
+        conn, count, rule_info = results["allowed"][0]
+        assert count == 3
+
+    def test_analyze_dns_connections(self):
+        """DNS connections are analyzed correctly."""
+        policy = """
+        [:53/udp]
+        8.8.8.8
+        """
+        connections = [
+            {"type": "dns", "dst_ip": "8.8.8.8", "dst_port": 53, "name": "github.com"},
+            {"type": "dns", "dst_ip": "1.1.1.1", "dst_port": 53, "name": "example.com"},
+        ]
+        results = analyze_connections(policy, connections)
+
+        # 8.8.8.8 is allowed (IP rule), 1.1.1.1 is blocked (different DNS server)
+        assert len(results["allowed"]) == 1
+        assert len(results["blocked"]) == 1
+
+
+class TestConnectionFormatting:
+    """Tests for connection formatting."""
+
+    def test_format_https(self):
+        """HTTPS connections formatted correctly."""
+        conn = {"type": "https", "host": "github.com", "dst_port": 443}
+        assert format_connection(conn) == "https://github.com"
+
+        conn = {"type": "https", "host": "github.com", "dst_port": 8443}
+        assert format_connection(conn) == "https://github.com:8443"
+
+    def test_format_http(self):
+        """HTTP connections formatted correctly."""
+        conn = {"type": "http", "method": "POST", "url": "http://example.com/api"}
+        assert format_connection(conn) == "POST http://example.com/api"
+
+    def test_format_dns(self):
+        """DNS connections formatted correctly."""
+        conn = {"type": "dns", "name": "github.com", "dst_ip": "8.8.8.8"}
+        assert format_connection(conn) == "dns:github.com (via 8.8.8.8)"
+
+    def test_format_tcp(self):
+        """TCP connections formatted correctly."""
+        conn = {"type": "tcp", "host": "github.com", "dst_port": 22}
+        assert format_connection(conn) == "tcp://github.com:22"
+
+    def test_format_udp(self):
+        """UDP connections formatted correctly."""
+        conn = {"type": "udp", "dst_ip": "8.8.8.8", "dst_port": 123}
+        assert format_connection(conn) == "udp://8.8.8.8:123"
+
+
+class TestConnectionKey:
+    """Tests for connection deduplication keys."""
+
+    def test_https_key_by_host_and_port(self):
+        """HTTPS connections keyed by host and port."""
+        conn1 = {
+            "type": "https",
+            "host": "github.com",
+            "dst_port": 443,
+            "dst_ip": "1.1.1.1",
+        }
+        conn2 = {
+            "type": "https",
+            "host": "github.com",
+            "dst_port": 443,
+            "dst_ip": "2.2.2.2",
+        }
+        assert connection_key(conn1) == connection_key(conn2)
+
+    def test_http_key_by_method_and_url(self):
+        """HTTP connections keyed by method and URL."""
+        conn1 = {"type": "http", "method": "GET", "url": "http://example.com/api"}
+        conn2 = {"type": "http", "method": "POST", "url": "http://example.com/api"}
+        assert connection_key(conn1) != connection_key(conn2)
+
+    def test_dns_key_by_name(self):
+        """DNS connections keyed by query name."""
+        conn1 = {
+            "type": "dns",
+            "name": "github.com",
+            "dst_ip": "8.8.8.8",
+            "dst_port": 53,
+        }
+        conn2 = {
+            "type": "dns",
+            "name": "github.com",
+            "dst_ip": "1.1.1.1",
+            "dst_port": 53,
+        }
+        assert connection_key(conn1) == connection_key(conn2)
 
 
 class TestDumpRules:
