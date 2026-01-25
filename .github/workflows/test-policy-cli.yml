@@ -161,6 +161,10 @@ jobs:
                       # HTTP on port 80
                       [:80]
                       example.com
+
+                      # Azure wireserver (WALinuxAgent)
+                      [:*]
+                      168.63.129.16
           EOF
 
           PYTHONPATH=src python -m proxy.policy permissive-workflow.yml --analyze-log connections.jsonl -v
