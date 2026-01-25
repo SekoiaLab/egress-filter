@@ -1,547 +1,542 @@
-"""Policy parser - converts policy text to flattened rules."""
+"""Policy parser - converts policy text to flattened rules using PEG grammar.
 
-import re
-from typing import Iterator
+Uses parsimonious for PEG parsing. The grammar is the source of truth for
+what syntax is valid - validation happens at parse time, not after.
+"""
+
+from parsimonious.exceptions import ParseError
+from parsimonious.grammar import Grammar
+from parsimonious.nodes import Node, NodeVisitor
 
 from .types import AttrValue, HeaderContext, Protocol, Rule
 
 # =============================================================================
-# Regex patterns
+# PEG Grammar (source of truth for syntax)
 # =============================================================================
 
-# IPv4 components
-OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
-IPV4 = rf"(?:{OCTET}\.{OCTET}\.{OCTET}\.{OCTET})"
+GRAMMAR = Grammar(r"""
+policy          = (line newline)* line?
+line            = header / rule / comment_only / blank
+blank           = ws*
+comment_only    = ws* comment
+comment         = "#" ~"[^\n]*"
+inline_comment  = ws+ comment
+newline         = "\n" / "\r\n"
+ws              = " " / "\t"
 
-# Patterns for rule types
-IP_PATTERN = re.compile(rf"^({IPV4})$")
-CIDR_PATTERN = re.compile(rf"^({IPV4}/(?:3[0-2]|[12]?[0-9]))$")
-WILDCARD_HOST_PATTERN = re.compile(r"^\*\.(.+)$")
-URL_PATTERN = re.compile(r"^(https?://[^\s]+)$")
-PATH_PATTERN = re.compile(r"^(/[^\s]*)$")
+header          = ws* "[" header_attrs? "]" inline_comment? ws*
+header_attrs    = url_base / method_attr / port_proto_attr
+url_base        = scheme "://" hostname url_port? url_path?
+port_proto_attr = port_attr proto_attr?
 
-# Hostname validation (simplified - allows valid DNS names)
-# TLD must start with a letter to distinguish from invalid IPs like 256.0.0.0
-HOSTNAME_PATTERN = re.compile(
-    r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$"
-)
-TLD_STARTS_WITH_LETTER = re.compile(r"\.[a-zA-Z][a-zA-Z0-9]*$")
+rule            = ws* (url_rule / path_rule / cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs? inline_comment? ws*
 
-# Port pattern: :PORT or :PORT|PORT or :*
-PORT_PATTERN = re.compile(r"^:(\*|\d+(?:\|\d+)*)$")
+url_rule        = (method_attr ws+)? scheme "://" hostname url_port? url_path
+scheme          = "https" / "http"
+url_port        = ":" port_value
+url_path        = "/" path_rest
+path_rest       = ~"[a-zA-Z0-9_.~*/%+-]*"
 
-# Protocol pattern: /tcp or /udp
-PROTO_PATTERN = re.compile(r"^/(tcp|udp)$")
+path_rule       = (method_attr ws+)? "/" path_rest
 
-# HTTP methods
-METHODS = {"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "*"}
-METHOD_PATTERN = re.compile(r"^([A-Z*]+(?:\|[A-Z*]+)*)$")
+host_rule       = wildcard_host / exact_host
+wildcard_host   = "*." hostname_or_tld
+exact_host      = !ipv4_lookahead hostname !(":/")
+hostname        = (hostname_part ".")+ tld
+hostname_or_tld = hostname / tld
+tld             = ~"[a-zA-Z][a-zA-Z0-9]*"
+hostname_part   = ~"[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?" / ~"[a-zA-Z0-9]"
 
-# Attribute patterns
-ATTR_PATTERN = re.compile(r"^([a-z]+(?:\[\d+\])?)=(.+)$")
-QUOTED_VALUE = re.compile(r'^"([^"]*)"$')
-BACKTICK_VALUE = re.compile(r"^`([^`]*)`$")
+ip_rule         = ipv4 !("." / "/")
+cidr_rule       = ipv4 "/" cidr_mask
 
-# Header pattern: [content] or []
-HEADER_PATTERN = re.compile(r"^\s*\[(.*)\]\s*(?:#.*)?$")
+ipv4            = octet "." octet "." octet "." octet !(".")
+ipv4_lookahead  = ~"[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+"
+octet           = ~"25[0-5]" / ~"2[0-4][0-9]" / ~"1[0-9][0-9]" / ~"[1-9][0-9]" / ~"[0-9]"
+cidr_mask       = ~"3[0-2]" / ~"[12][0-9]" / ~"[0-9]"
 
-# Comment pattern
-COMMENT_PATTERN = re.compile(r"#.*$")
+kv_attrs        = (ws+ kv_attr)+
+port_attr       = ":" port_list
+port_list       = port_value ("|" port_value)*
+port_value      = "*" / ~"[0-9]+"
 
+proto_attr      = "/" protocol
+protocol        = "udp" / "tcp"
 
-def is_valid_hostname(hostname: str) -> bool:
-    """Check if a string is a valid hostname.
+method_attr     = method ("|" method)*
+method          = "GET" / "HEAD" / "POST" / "PUT" / "DELETE" / "PATCH" / "OPTIONS" / "*"
 
-    Requirements:
-    - Matches DNS name pattern
-    - TLD must start with a letter (to reject things like 256.0.0.0)
-    """
-    if not HOSTNAME_PATTERN.match(hostname):
-        return False
-    # TLD must start with a letter
-    if not TLD_STARTS_WITH_LETTER.search(hostname):
-        return False
-    return True
-
-
-def validate_url(url: str) -> str | None:
-    """Validate a URL for policy rules.
-
-    Returns None if invalid, otherwise returns the validated URL.
-
-    Rejects:
-    - Query strings (?...)
-    - Fragments (#...)
-    - Wildcards in hostname (*.example.com)
-    """
-    # Check for query string or fragment
-    if "?" in url or "#" in url.split("://", 1)[-1]:
-        return None
-
-    # Extract hostname from URL
-    try:
-        url_no_scheme = url.split("://", 1)[1]
-        host_part = url_no_scheme.split("/")[0]
-        # Remove port if present
-        if ":" in host_part:
-            hostname = host_part.rsplit(":", 1)[0]
-        else:
-            hostname = host_part
-
-        # Reject wildcards in URL hostname
-        if "*" in hostname:
-            return None
-
-    except (IndexError, ValueError):
-        return None
-
-    return url
+kv_attr         = kv_key "=" kv_value
+kv_key          = arg_indexed / ~"[a-z]+"
+arg_indexed     = "arg[" ~"[0-9]+" "]"
+kv_value        = backtick_value / quoted_value / unquoted_value
+backtick_value  = "`" ~"[^`]*" "`"
+quoted_value    = "\"" ~"[^\"]*" "\""
+unquoted_value  = ~"[^\\s#]+"
+""")
 
 
-def parse_port_proto(text: str) -> tuple[list[int] | str | None, Protocol | None]:
-    """Parse port and protocol suffix like ':443/tcp' or ':53/udp' or ':*'.
+# =============================================================================
+# Helper to extract values from parse tree
+# =============================================================================
 
-    Returns (port, protocol) where each can be None if not specified.
-    """
-    port: list[int] | str | None = None
-    protocol: Protocol | None = None
 
-    # Check for protocol suffix first
-    if "/udp" in text:
-        protocol = "udp"
-        text = text.replace("/udp", "")
-    elif "/tcp" in text:
-        protocol = "tcp"
-        text = text.replace("/tcp", "")
+def _get_text(node_or_list):
+    """Extract text from a node or nested list structure."""
+    if isinstance(node_or_list, Node):
+        return node_or_list.text
+    if isinstance(node_or_list, str):
+        return node_or_list
+    if isinstance(node_or_list, list):
+        return "".join(_get_text(x) for x in node_or_list if x)
+    return ""
 
-    # Check for port
-    if ":" in text:
-        port_match = PORT_PATTERN.match(text[text.rindex(":") :])
-        if port_match:
-            port_str = port_match.group(1)
-            if port_str == "*":
-                port = "*"
+
+def _is_empty(visited):
+    """Check if visited children represent an empty/optional match."""
+    if visited is None:
+        return True
+    if isinstance(visited, Node):
+        return visited.text == ""
+    if isinstance(visited, list):
+        return len(visited) == 0 or all(_is_empty(x) for x in visited)
+    if isinstance(visited, str):
+        return visited == ""
+    return False
+
+
+def _flatten(lst):
+    """Flatten nested lists, filtering out empty nodes."""
+    result = []
+    for item in lst:
+        if isinstance(item, list):
+            result.extend(_flatten(item))
+        elif item is not None and not _is_empty(item):
+            result.append(item)
+    return result
+
+
+# =============================================================================
+# AST Visitor - transforms parse tree to Rule objects
+# =============================================================================
+
+
+class PolicyVisitor(NodeVisitor):
+    """Visits parse tree and extracts structured data."""
+
+    def __init__(self):
+        self.rules = []
+        self.ctx = HeaderContext()
+
+    def visit_policy(self, node, visited_children):
+        return self.rules
+
+    def visit_line(self, node, visited_children):
+        return visited_children[0] if visited_children else None
+
+    def visit_header(self, node, visited_children):
+        # ws* "[" header_attrs? "]" inline_comment? ws*
+        _, _, header_attrs, _, _, _ = visited_children
+
+        # Reset context for new header
+        self.ctx.reset()
+
+        if not _is_empty(header_attrs):
+            attrs = _flatten(header_attrs)
+
+            # Check if the entire attrs list is a method list (e.g., [GET|HEAD] header)
+            # This happens because _flatten unwraps ['GET', 'HEAD'] into individual strings
+            valid_methods = (
+                "GET",
+                "HEAD",
+                "POST",
+                "PUT",
+                "DELETE",
+                "PATCH",
+                "OPTIONS",
+                "*",
+            )
+            if attrs and all(isinstance(x, str) and x in valid_methods for x in attrs):
+                self.ctx.methods = attrs
             else:
-                port = [int(p) for p in port_str.split("|")]
-
-    return port, protocol
-
-
-def parse_methods(text: str) -> list[str] | None:
-    """Parse method prefix like 'GET' or 'GET|POST'.
-
-    Returns list of methods or None if no methods specified.
-    """
-    match = METHOD_PATTERN.match(text)
-    if match:
-        methods = match.group(1).split("|")
-        if all(m in METHODS for m in methods):
-            return methods
-    return None
-
-
-def parse_attrs(parts: list[str]) -> dict[str, str | AttrValue]:
-    """Parse key=value attributes from remaining parts."""
-    attrs: dict[str, str | AttrValue] = {}
-
-    for part in parts:
-        match = ATTR_PATTERN.match(part)
-        if match:
-            key, value = match.groups()
-
-            # Check for quoted value (literal, no wildcards)
-            quoted = QUOTED_VALUE.match(value)
-            if quoted:
-                attrs[key] = AttrValue(value=quoted.group(1), literal=True)
-                continue
-
-            # Check for backtick value (wildcards active)
-            backtick = BACKTICK_VALUE.match(value)
-            if backtick:
-                attrs[key] = AttrValue(value=backtick.group(1), literal=False)
-                continue
-
-            # Unquoted value (wildcards active)
-            attrs[key] = value
-
-    return attrs
-
-
-def parse_header(content: str, ctx: HeaderContext) -> None:
-    """Parse header content and update context.
-
-    Headers can contain:
-    - Port: :443, :80|443, :*
-    - Protocol: :53/udp
-    - Methods: GET, GET|HEAD
-    - URL base: https://api.github.com, https://api.github.com/v1
-    - Empty: [] resets to defaults
-
-    Each header is a full reset - it doesn't accumulate with previous headers.
-    """
-    content = content.strip()
-
-    # Empty header resets to defaults
-    if not content:
-        ctx.reset()
-        return
-
-    # Check for URL base
-    if content.startswith("http://") or content.startswith("https://"):
-        # Reset context first, then set URL base
-        ctx.reset()
-        ctx.url_base = content
-        # Extract port from URL if present
-        url_no_scheme = content.split("://", 1)[1]
-        if ":" in url_no_scheme.split("/")[0]:
-            # Has explicit port in URL
-            host_port = url_no_scheme.split("/")[0]
-            port_str = host_port.split(":")[-1]
-            try:
-                ctx.port = [int(port_str)]
-            except ValueError:
-                pass
-        else:
-            # Default port based on scheme
-            ctx.port = [443] if content.startswith("https://") else [80]
-        ctx.protocol = "tcp"
-        return
-
-    # Check for methods only
-    methods = parse_methods(content)
-    if methods:
-        # Reset context first, then set methods
-        ctx.reset()
-        ctx.methods = methods
-        return
-
-    # Check for port/protocol
-    if content.startswith(":"):
-        # Reset context first, then set port/protocol
-        ctx.reset()
-        port, protocol = parse_port_proto(content)
-        if port is not None:
-            ctx.port = port
-        if protocol is not None:
-            ctx.protocol = protocol
-        return
-
-
-def tokenize_line(line: str) -> list[str]:
-    """Tokenize a line respecting quoted and backtick strings.
-
-    Handles:
-    - Unquoted tokens (space-separated)
-    - "double quoted" values (spaces preserved)
-    - `backtick quoted` values (spaces preserved)
-    """
-    tokens = []
-    i = 0
-    current = ""
-
-    while i < len(line):
-        char = line[i]
-
-        if char in " \t":
-            # Whitespace - end current token
-            if current:
-                tokens.append(current)
-                current = ""
-            i += 1
-        elif char == '"':
-            # Double-quoted string
-            current += char
-            i += 1
-            while i < len(line) and line[i] != '"':
-                current += line[i]
-                i += 1
-            if i < len(line):
-                current += line[i]  # Include closing quote
-                i += 1
-        elif char == "`":
-            # Backtick-quoted string
-            current += char
-            i += 1
-            while i < len(line) and line[i] != "`":
-                current += line[i]
-                i += 1
-            if i < len(line):
-                current += line[i]  # Include closing backtick
-                i += 1
-        else:
-            current += char
-            i += 1
-
-    if current:
-        tokens.append(current)
-
-    return tokens
-
-
-def parse_rule_line(line: str, ctx: HeaderContext) -> Rule | None:
-    """Parse a single rule line using current context.
-
-    Returns a Rule or None if the line is not a valid rule.
-    """
-    line = line.strip()
-
-    # Skip empty lines and comments
-    if not line or line.startswith("#"):
+                for attr in attrs:
+                    if isinstance(attr, dict):
+                        if "url_base" in attr:
+                            self.ctx.url_base = attr["url_base"]
+                            if attr["url_base"].startswith("https://"):
+                                self.ctx.port = [443]
+                            else:
+                                self.ctx.port = [80]
+                            self.ctx.protocol = "tcp"
+                        if "methods" in attr:
+                            self.ctx.methods = attr["methods"]
+                        if "port" in attr:
+                            self.ctx.port = attr["port"]
+                        if "protocol" in attr:
+                            self.ctx.protocol = attr["protocol"]
         return None
 
-    # Strip inline comments (but not inside quotes)
-    # Simple approach: find # that's not inside quotes
-    # Note: For URLs, # could be a fragment - reject those in validate_url
-    in_quote = None
-    comment_idx = -1
-    for i, char in enumerate(line):
-        if in_quote:
-            if char == in_quote:
-                in_quote = None
-        elif char in ('"', "`"):
-            in_quote = char
-        elif char == "#":
-            # Check if this looks like a URL fragment (# immediately after path chars)
-            # If line starts with http:// or https://, and # is before any space,
-            # it's likely a fragment, not a comment - reject the whole line
-            if (
-                line.startswith("http://") or line.startswith("https://")
-            ) and " " not in line[:i]:
-                return None  # URL with fragment - invalid
-            comment_idx = i
-            break
-    if comment_idx >= 0:
-        line = line[:comment_idx].strip()
-    if not line:
-        return None
+    def visit_header_attrs(self, node, visited_children):
+        return visited_children[0]
 
-    # Tokenize respecting quotes
-    parts = tokenize_line(line)
-    if not parts:
-        return None
+    def visit_url_base(self, node, visited_children):
+        return {"url_base": node.text}
 
-    # Check for method prefix
-    methods: list[str] | None = None
-    if len(parts) >= 2:
-        maybe_methods = parse_methods(parts[0])
-        if maybe_methods:
-            methods = maybe_methods
-            parts = parts[1:]
+    def visit_port_proto_attr(self, node, visited_children):
+        # port_attr proto_attr?
+        result = {}
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, dict):
+                result.update(item)
+            elif isinstance(item, list):
+                result["port"] = item
+            elif item == "*":
+                result["port"] = "*"
+            elif isinstance(item, int):
+                result["port"] = [item]
+            elif item in ("udp", "tcp"):
+                result["protocol"] = item
+        return result if result else None
 
-    if not parts:
-        return None
+    def visit_rule(self, node, visited_children):
+        # ws* (url_rule / path_rule / cidr_rule / ip_rule / host_rule) port_proto_attr? kv_attrs? inline_comment? ws*
+        _, rule_data, port_proto, kv_attrs, _, _ = visited_children
 
-    # First part is the target (possibly with port/protocol suffix)
-    target_part = parts[0]
-    remaining_parts = parts[1:]
+        # Extract rule info from nested structure
+        rule_info = None
+        flat_rule = _flatten([rule_data])
+        for item in flat_rule:
+            if isinstance(item, dict) and "type" in item:
+                rule_info = item
+                break
 
-    # Parse port/protocol from target or remaining parts
-    port: list[int] | str | None = None
-    protocol: Protocol | None = None
-
-    # Check if target has port/protocol suffix
-    if ":" in target_part or "/udp" in target_part or "/tcp" in target_part:
-        # Extract the base target and port/protocol
-        base_target = target_part
-
-        # Handle protocol suffix - /udp and /tcp require explicit port
-        if "/udp" in base_target:
-            # Check that there's a port before /udp
-            if ":" not in base_target.split("/udp")[0]:
-                return None  # /udp without port is invalid
-            protocol = "udp"
-            base_target = base_target.replace("/udp", "")
-        elif "/tcp" in base_target:
-            # /tcp is optional but if present, must have port
-            if ":" not in base_target.split("/tcp")[0]:
-                return None  # /tcp without port is invalid
-            protocol = "tcp"
-            base_target = base_target.replace("/tcp", "")
-
-        # Handle port
-        if ":" in base_target and not base_target.startswith("http"):
-            colon_idx = base_target.rfind(":")
-            port_str = base_target[colon_idx + 1 :]
-            base_target = base_target[:colon_idx]
-            if port_str == "*":
-                port = "*"
-            elif port_str:
-                try:
-                    port = [int(p) for p in port_str.split("|")]
-                except ValueError:
-                    pass
-
-        target_part = base_target
-
-    # Check remaining parts for port/protocol attributes
-    new_remaining = []
-    for part in remaining_parts:
-        if part.startswith(":"):
-            p, pr = parse_port_proto(part)
-            if p is not None:
-                port = p
-            if pr is not None:
-                protocol = pr
-        elif part.startswith("/") and part in ("/tcp", "/udp"):
-            protocol = "tcp" if part == "/tcp" else "udp"
-        else:
-            new_remaining.append(part)
-    remaining_parts = new_remaining
-
-    # Parse attributes
-    attrs = parse_attrs(remaining_parts)
-
-    # Apply context defaults
-    if port is None:
-        port = ctx.port
-    if protocol is None:
-        protocol = ctx.protocol
-
-    # Determine rule type and create rule
-    rule_type = None
-    target = target_part
-
-    # Check for path rule
-    if target.startswith("/"):
-        if ctx.url_base is None:
-            # Path rule without URL base context - invalid
+        if not rule_info:
             return None
-        rule_type = "path"
-        if methods is None:
-            methods = ctx.methods if ctx.methods else ["GET", "HEAD"]
-        return Rule(
+
+        # Apply port/proto from rule or context
+        port = self.ctx.port
+        protocol = self.ctx.protocol
+
+        # For URL rules, derive port from scheme if not in context
+        rule_type = rule_info.get("type")
+        target = rule_info.get("target")
+        if rule_type == "url" and target:
+            if target.startswith("http://"):
+                port = [80]
+            elif target.startswith("https://"):
+                port = [443]
+
+        if not _is_empty(port_proto):
+            flat_pp = _flatten([port_proto])
+            for item in flat_pp:
+                if isinstance(item, dict):
+                    if "port" in item:
+                        port = item["port"]
+                    if "protocol" in item:
+                        protocol = item["protocol"]
+
+        # Extract attributes
+        attrs = {}
+        if not _is_empty(kv_attrs):
+            flat_attrs = _flatten([kv_attrs])
+            for attr in flat_attrs:
+                if isinstance(attr, dict) and "type" not in attr:
+                    attrs.update(attr)
+
+        # Build the Rule (rule_type and target already extracted above)
+        methods = rule_info.get("methods")
+        url_base = rule_info.get("url_base")
+
+        # Apply context defaults for methods on URL/path rules
+        if rule_type in ("url", "path") and methods is None:
+            methods = self.ctx.methods if self.ctx.methods else ["GET", "HEAD"]
+
+        # Path rules need URL base from context
+        if rule_type == "path":
+            url_base = self.ctx.url_base
+            if url_base is None:
+                # Path rule without URL context - skip
+                return None
+
+        rule = Rule(
             type=rule_type,
             target=target,
             port=port,
             protocol=protocol,
             methods=methods,
-            url_base=ctx.url_base,
+            url_base=url_base,
             attrs=attrs,
         )
+        self.rules.append(rule)
+        return rule
 
-    # Check for URL rule
-    if target.startswith("http://") or target.startswith("https://"):
-        # Validate URL (rejects query strings, wildcards in hostname)
-        if validate_url(target) is None:
-            return None
+    def visit_url_rule(self, node, visited_children):
+        # (method_attr ws+)? scheme "://" hostname url_port? url_path
+        method_part, scheme, _, hostname, url_port, url_path = visited_children
 
-        rule_type = "url"
-        # Parse port from URL if not already set from suffix
-        if port == ctx.port:  # Not overridden
-            if "://" in target:
-                url_no_scheme = target.split("://", 1)[1]
-                host_part = url_no_scheme.split("/")[0]
-                if ":" in host_part:
-                    port_str = host_part.split(":")[-1]
-                    try:
-                        port = [int(port_str)]
-                    except ValueError:
-                        pass
-                else:
-                    port = [443] if target.startswith("https://") else [80]
-        if methods is None:
-            methods = ctx.methods if ctx.methods else ["GET", "HEAD"]
-        return Rule(
-            type=rule_type,
-            target=target,
-            port=port,
-            protocol=protocol,
-            methods=methods,
-            url_base=None,
-            attrs=attrs,
-        )
+        methods = None
+        if not _is_empty(method_part):
+            flat = _flatten([method_part])
+            # Collect method strings from flattened list
+            method_strs = [
+                x
+                for x in flat
+                if isinstance(x, str)
+                and x
+                in ("GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "*")
+            ]
+            if method_strs:
+                methods = method_strs
 
-    # Check for CIDR
-    if CIDR_PATTERN.match(target):
-        rule_type = "cidr"
-        return Rule(
-            type=rule_type,
-            target=target,
-            port=port,
-            protocol=protocol,
-            methods=None,
-            url_base=None,
-            attrs=attrs,
-        )
+        # Build full URL as target (without method prefix)
+        scheme_text = _get_text(scheme)
+        hostname_text = _get_text(hostname)
+        port_text = _get_text(url_port)
+        path_text = _get_text(url_path)
 
-    # Check for IP
-    if IP_PATTERN.match(target):
-        rule_type = "ip"
-        return Rule(
-            type=rule_type,
-            target=target,
-            port=port,
-            protocol=protocol,
-            methods=None,
-            url_base=None,
-            attrs=attrs,
-        )
+        target = f"{scheme_text}://{hostname_text}{port_text}{path_text}"
 
-    # Check for wildcard hostname
-    wildcard_match = WILDCARD_HOST_PATTERN.match(target)
-    if wildcard_match:
-        wildcard_domain = wildcard_match.group(1)
-        # Validate the domain part (TLD must start with letter)
-        if not is_valid_hostname(wildcard_domain):
-            return None
-        rule_type = "wildcard_host"
-        return Rule(
-            type=rule_type,
-            target=wildcard_domain,  # Store without *. prefix
-            port=port,
-            protocol=protocol,
-            methods=None,
-            url_base=None,
-            attrs=attrs,
-        )
+        return {
+            "type": "url",
+            "target": target,
+            "methods": methods,
+        }
 
-    # Validate hostname (TLD must start with letter)
-    if not is_valid_hostname(target):
+    def visit_path_rule(self, node, visited_children):
+        # (method_attr ws+)? "/" path_rest
+        method_part, slash, path_rest = visited_children
+
+        methods = None
+        if not _is_empty(method_part):
+            flat = _flatten([method_part])
+            # Collect method strings from flattened list
+            method_strs = [
+                x
+                for x in flat
+                if isinstance(x, str)
+                and x
+                in ("GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "*")
+            ]
+            if method_strs:
+                methods = method_strs
+
+        target = "/" + _get_text(path_rest)
+
+        return {
+            "type": "path",
+            "target": target,
+            "methods": methods,
+            "url_base": None,
+        }
+
+    def visit_host_rule(self, node, visited_children):
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, dict):
+                return item
         return None
 
-    rule_type = "host"
-    return Rule(
-        type=rule_type,
-        target=target,
-        port=port,
-        protocol=protocol,
-        methods=None,
-        url_base=None,
-        attrs=attrs,
-    )
+    def visit_wildcard_host(self, node, visited_children):
+        # "*." hostname_or_tld
+        _, hostname = visited_children
+        return {
+            "type": "wildcard_host",
+            "target": _get_text(hostname),
+        }
+
+    def visit_exact_host(self, node, visited_children):
+        # !ipv4_lookahead hostname !(":/")
+        _, hostname, _ = visited_children
+        return {
+            "type": "host",
+            "target": _get_text(hostname),
+        }
+
+    def visit_ip_rule(self, node, visited_children):
+        # ipv4 !("." / "/")
+        ipv4, _ = visited_children
+        return {
+            "type": "ip",
+            "target": ipv4 if isinstance(ipv4, str) else _get_text(ipv4),
+        }
+
+    def visit_cidr_rule(self, node, visited_children):
+        # ipv4 "/" cidr_mask
+        ipv4, _, mask = visited_children
+        ipv4_text = ipv4 if isinstance(ipv4, str) else _get_text(ipv4)
+        mask_text = mask if isinstance(mask, str) else _get_text(mask)
+        return {
+            "type": "cidr",
+            "target": f"{ipv4_text}/{mask_text}",
+        }
+
+    def visit_ipv4(self, node, visited_children):
+        return node.text
+
+    def visit_cidr_mask(self, node, visited_children):
+        return node.text
+
+    def visit_port_attr(self, node, visited_children):
+        # ":" port_list
+        _, port_list = visited_children
+        return {"port": port_list}
+
+    def visit_port_list(self, node, visited_children):
+        # port_value ("|" port_value)*
+        first, rest = visited_children
+
+        if first == "*":
+            return "*"
+
+        ports = [first] if isinstance(first, int) else []
+        if isinstance(first, int):
+            pass
+        elif first == "*":
+            return "*"
+
+        flat = _flatten([rest])
+        for item in flat:
+            if isinstance(item, int):
+                ports.append(item)
+
+        return ports if ports else [first] if isinstance(first, int) else first
+
+    def visit_port_value(self, node, visited_children):
+        if node.text == "*":
+            return "*"
+        return int(node.text)
+
+    def visit_proto_attr(self, node, visited_children):
+        # "/" protocol
+        _, protocol = visited_children
+        return {"protocol": protocol}
+
+    def visit_protocol(self, node, visited_children):
+        return node.text
+
+    def visit_method_attr(self, node, visited_children):
+        # method ("|" method)*
+        first, rest = visited_children
+        methods = [first]
+
+        flat = _flatten([rest])
+        for item in flat:
+            if isinstance(item, str) and item in (
+                "GET",
+                "HEAD",
+                "POST",
+                "PUT",
+                "DELETE",
+                "PATCH",
+                "OPTIONS",
+                "*",
+            ):
+                methods.append(item)
+
+        return methods
+
+    def visit_method(self, node, visited_children):
+        return node.text
+
+    def visit_kv_attrs(self, node, visited_children):
+        # (ws+ kv_attr)+
+        attrs = []
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, dict):
+                attrs.append(item)
+        return attrs
+
+    def visit_kv_attr(self, node, visited_children):
+        # kv_key "=" kv_value
+        key, _, value = visited_children
+        key_text = key if isinstance(key, str) else _get_text(key)
+        return {key_text: value}
+
+    def visit_kv_key(self, node, visited_children):
+        return node.text
+
+    def visit_kv_value(self, node, visited_children):
+        flat = _flatten(visited_children)
+        for item in flat:
+            if isinstance(item, (str, AttrValue)):
+                return item
+        return visited_children[0] if visited_children else node.text
+
+    def visit_backtick_value(self, node, visited_children):
+        # "`" ~"[^`]*" "`"
+        # Extract content between backticks
+        content = node.text[1:-1]  # Remove surrounding backticks
+        return AttrValue(value=content, literal=False)
+
+    def visit_quoted_value(self, node, visited_children):
+        # "\"" ~"[^\"]*" "\""
+        content = node.text[1:-1]  # Remove surrounding quotes
+        return AttrValue(value=content, literal=True)
+
+    def visit_unquoted_value(self, node, visited_children):
+        return node.text
+
+    def visit_hostname(self, node, visited_children):
+        return node.text
+
+    def visit_hostname_or_tld(self, node, visited_children):
+        return node.text
+
+    def visit_scheme(self, node, visited_children):
+        return node.text
+
+    def visit_path_rest(self, node, visited_children):
+        return node.text
+
+    def generic_visit(self, node, visited_children):
+        return visited_children or node
+
+
+# =============================================================================
+# Public API
+# =============================================================================
 
 
 def parse_policy(policy_text: str) -> list[Rule]:
     """Parse a policy text into a list of flattened rules.
 
+    Uses PEG grammar for parsing - invalid syntax is rejected at parse time.
     Headers set context for subsequent rules. Each rule is self-sufficient
     after parsing (context is inlined into the rule).
+
+    Invalid lines are silently skipped (lenient parsing per design doc).
     """
-    rules: list[Rule] = []
+    rules = []
     ctx = HeaderContext()
 
     for line in policy_text.splitlines():
-        line = line.strip()
+        line_stripped = line.strip()
 
-        # Skip empty lines and comment-only lines
-        if not line or line.startswith("#"):
+        # Skip empty lines and comments
+        if not line_stripped or line_stripped.startswith("#"):
             continue
 
-        # Check for header
-        header_match = HEADER_PATTERN.match(line)
-        if header_match:
-            parse_header(header_match.group(1), ctx)
-            continue
+        try:
+            tree = GRAMMAR.parse(line)
+            visitor = PolicyVisitor()
+            visitor.ctx = ctx  # Share context across lines
+            visitor.visit(tree)
 
-        # Parse as rule
-        rule = parse_rule_line(line, ctx)
-        if rule:
-            rules.append(rule)
+            # Update shared context from visitor
+            ctx = visitor.ctx
+
+            # Collect any rules parsed from this line
+            rules.extend(visitor.rules)
+        except ParseError:
+            # Invalid line - skip (lenient parsing)
+            pass
 
     return rules
 
 
-def flatten_policy(policy_text: str) -> Iterator[dict]:
+def flatten_policy(policy_text: str):
     """Parse policy and yield flattened rule dictionaries.
 
     This is a convenience function for testing - converts rules to dicts
