@@ -1,5 +1,7 @@
 """Netfilterqueue handler for UDP packets."""
 
+from __future__ import annotations
+
 # Optional imports - graceful degradation if not available
 try:
     from netfilterqueue import NetfilterQueue
@@ -18,6 +20,17 @@ from ..bpf import BPFState
 from .. import logging as proxy_logging
 from ..proc import get_proc_info
 from ..utils import IPPROTO_UDP
+from ..policy import PolicyEnforcer, ProcessInfo
+
+
+def _make_proc_info(proc_dict: dict) -> ProcessInfo:
+    """Convert proc info dict to ProcessInfo object."""
+    return ProcessInfo(
+        exe=proc_dict.get("exe"),
+        cmdline=proc_dict.get("cmdline"),
+        cgroup=proc_dict.get("cgroup"),
+        step=proc_dict.get("step"),
+    )
 
 
 class NfqueueHandler:
@@ -55,17 +68,26 @@ class NfqueueHandler:
     # Mark bits (can be combined)
     MARK_DNS_REDIRECT = 2   # Redirect to mitmproxy DNS port
     MARK_FASTPATH = 4       # Save to conntrack for fast-path
+    MARK_DROP = 0           # Drop the packet (no marks)
 
-    def __init__(self, bpf: BPFState):
+    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer | None = None):
+        """Initialize the handler.
+
+        Args:
+            bpf: BPF state for PID lookup
+            enforcer: Policy enforcer (optional, if None policy is not enforced)
+        """
         self.bpf = bpf
+        self.enforcer = enforcer
         self.nfqueue = None
         self.queue_num = 1
         self.packet_count = 0  # For debugging fast-path
 
     def handle_packet(self, pkt):
-        """Process a packet from nfqueue. ALWAYS accepts for safety."""
+        """Process a packet from nfqueue. Enforces policy if enforcer is set."""
         self.packet_count += 1
         mark = self.MARK_FASTPATH  # Default: just fast-path
+        drop = False
 
         try:
             if HAS_SCAPY:
@@ -81,6 +103,7 @@ class NfqueueHandler:
 
                     # Look up PID
                     pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port, protocol=IPPROTO_UDP)
+                    proc_dict = get_proc_info(pid)
 
                     # DNS detection by packet structure (catches DNS on any port)
                     # This runs in mangle (before NAT), so we see the original destination
@@ -94,24 +117,62 @@ class NfqueueHandler:
                         cache_key = (src_port, txid)
                         self.bpf.dns_cache[cache_key] = (pid, dst_ip, dst_port)
                     else:
-                        # Non-DNS UDP - log here (not handled by mitmproxy)
-                        proxy_logging.log_connection(
-                            type="udp",
-                            dst_ip=dst_ip,
-                            dst_port=dst_port,
-                            **get_proc_info(pid),
-                            src_port=src_port,
-                            pid=pid,
-                        )
+                        # Non-DNS UDP - check policy and log
+                        verdict = "allow"
+
+                        if self.enforcer:
+                            decision = self.enforcer.check_udp(
+                                dst_ip=dst_ip,
+                                dst_port=dst_port,
+                                proc=_make_proc_info(proc_dict),
+                            )
+                            verdict = decision.verdict.value
+
+                            if decision.blocked:
+                                proxy_logging.log_connection(
+                                    type="udp",
+                                    dst_ip=dst_ip,
+                                    dst_port=dst_port,
+                                    verdict=verdict,
+                                    reason=decision.reason,
+                                    **proc_dict,
+                                    src_port=src_port,
+                                    pid=pid,
+                                )
+                                drop = True
+                            else:
+                                proxy_logging.log_connection(
+                                    type="udp",
+                                    dst_ip=dst_ip,
+                                    dst_port=dst_port,
+                                    verdict=verdict,
+                                    **proc_dict,
+                                    src_port=src_port,
+                                    pid=pid,
+                                )
+                        else:
+                            proxy_logging.log_connection(
+                                type="udp",
+                                dst_ip=dst_ip,
+                                dst_port=dst_port,
+                                verdict=verdict,
+                                **proc_dict,
+                                src_port=src_port,
+                                pid=pid,
+                            )
         except Exception as e:
             proxy_logging.logger.warning(f"Error processing UDP packet: {e}")
 
-        # Set mark and use repeat() to reinject packet at start of chain.
-        # This ensures iptables sees the mark (accept() may skip subsequent rules).
-        # The CONNMARK save rule runs before NFQUEUE, so on repeat it saves
-        # the mark to conntrack and returns, avoiding re-queuing.
-        pkt.set_mark(mark)
-        pkt.repeat()
+        # Either drop or reinject the packet
+        if drop:
+            pkt.drop()
+        else:
+            # Set mark and use repeat() to reinject packet at start of chain.
+            # This ensures iptables sees the mark (accept() may skip subsequent rules).
+            # The CONNMARK save rule runs before NFQUEUE, so on repeat it saves
+            # the mark to conntrack and returns, avoiding re-queuing.
+            pkt.set_mark(mark)
+            pkt.repeat()
 
     def setup(self) -> bool:
         """Setup nfqueue binding. Returns True if successful."""
