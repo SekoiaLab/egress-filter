@@ -471,6 +471,125 @@ tests:
           step: Checkout code
         verdict: block
 
+  - name: Cgroup @docker matching
+    policy: |
+      registry.docker.io cgroup=@docker
+    checks:
+      # Docker container cgroup - allowed
+      - type: https
+        sni: registry.docker.io
+        dst_ip: 52.72.232.1
+        dst_port: 443
+        proc:
+          cgroup: /docker/abc123def456
+        verdict: allow
+
+      # Host process cgroup - blocked
+      - type: https
+        sni: registry.docker.io
+        dst_ip: 52.72.232.1
+        dst_port: 443
+        proc:
+          cgroup: /user.slice/user-1000.slice
+        verdict: block
+
+  - name: Cgroup @host matching
+    policy: |
+      github.com cgroup=@host
+    checks:
+      # Host process - allowed
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cgroup: /user.slice/user-1000.slice
+        verdict: allow
+
+      # Docker container - blocked
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cgroup: /docker/abc123def456
+        verdict: block
+
+  - name: Cgroup wildcard matching
+    policy: |
+      github.com cgroup=*actions*
+    checks:
+      # Matching cgroup - allowed
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cgroup: /system.slice/actions-runner.service
+        verdict: allow
+
+      # Non-matching cgroup - blocked
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cgroup: /user.slice/user-1000.slice
+        verdict: block
+
+  - name: Cmdline argument matching
+    policy: |
+      github.com arg=--upload
+    checks:
+      # Matching argument - allowed
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cmdline: [git, push, --upload]
+        verdict: allow
+
+      # No matching argument - blocked
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cmdline: [git, pull]
+        verdict: block
+
+  - name: Indexed argument matching
+    policy: |
+      github.com arg[0]=git arg[1]=push
+    checks:
+      # Matching indexed args - allowed
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cmdline: [git, push, origin, main]
+        verdict: allow
+
+      # Wrong arg[1] - blocked
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cmdline: [git, pull, origin]
+        verdict: block
+
+      # Missing arg[1] - blocked
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        proc:
+          cmdline: [git]
+        verdict: block
+
   # =============================================================================
   # Audit mode
   # =============================================================================
