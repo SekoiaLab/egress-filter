@@ -678,6 +678,70 @@ class PolicyVisitor(NodeVisitor):
 
 
 # =============================================================================
+# Placeholder substitution
+# =============================================================================
+
+
+def substitute_placeholders(
+    policy_text: str,
+    owner: str | None = None,
+    repo: str | None = None,
+) -> str:
+    """Substitute {owner} and {repo} placeholders in policy text.
+
+    These placeholders allow policies to reference the current repository
+    without hardcoding names. Values come from GITHUB_REPOSITORY env var.
+
+    Args:
+        policy_text: The policy text containing placeholders.
+        owner: Repository owner (e.g., "anthropics"). If None, placeholder is left as-is.
+        repo: Repository name (e.g., "egress-filter"). If None, placeholder is left as-is.
+
+    Returns:
+        Policy text with placeholders replaced.
+
+    Example:
+        >>> substitute_placeholders(
+        ...     "https://github.com/{owner}/{repo}/info/refs",
+        ...     owner="anthropics",
+        ...     repo="egress-filter"
+        ... )
+        'https://github.com/anthropics/egress-filter/info/refs'
+    """
+    result = policy_text
+    if owner is not None:
+        result = result.replace("{owner}", owner)
+    if repo is not None:
+        result = result.replace("{repo}", repo)
+    return result
+
+
+def parse_github_repository(github_repository: str | None) -> tuple[str | None, str | None]:
+    """Parse GITHUB_REPOSITORY env var into (owner, repo) tuple.
+
+    Args:
+        github_repository: Value of GITHUB_REPOSITORY env var (format: "owner/repo").
+
+    Returns:
+        Tuple of (owner, repo). Both are None if input is None or invalid.
+
+    Example:
+        >>> parse_github_repository("anthropics/egress-filter")
+        ('anthropics', 'egress-filter')
+        >>> parse_github_repository(None)
+        (None, None)
+    """
+    if not github_repository:
+        return None, None
+
+    parts = github_repository.split("/", 1)
+    if len(parts) != 2:
+        return None, None
+
+    return parts[0], parts[1]
+
+
+# =============================================================================
 # Public API
 # =============================================================================
 

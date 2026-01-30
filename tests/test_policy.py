@@ -418,5 +418,135 @@ def test_policy_enforcer(scenario):
         )
 
 
+# =============================================================================
+# Placeholder Substitution Tests
+# =============================================================================
+
+
+class TestParseGithubRepository:
+    """Tests for parse_github_repository function."""
+
+    def test_basic_owner_repo(self):
+        from proxy.policy import parse_github_repository
+
+        owner, repo = parse_github_repository("anthropics/egress-filter")
+        assert owner == "anthropics"
+        assert repo == "egress-filter"
+
+    def test_none_input(self):
+        from proxy.policy import parse_github_repository
+
+        owner, repo = parse_github_repository(None)
+        assert owner is None
+        assert repo is None
+
+    def test_empty_string(self):
+        from proxy.policy import parse_github_repository
+
+        owner, repo = parse_github_repository("")
+        assert owner is None
+        assert repo is None
+
+    def test_no_slash(self):
+        from proxy.policy import parse_github_repository
+
+        owner, repo = parse_github_repository("invalid")
+        assert owner is None
+        assert repo is None
+
+    def test_multiple_slashes(self):
+        from proxy.policy import parse_github_repository
+
+        # Split on first slash only - repo can contain slashes
+        owner, repo = parse_github_repository("owner/repo/extra")
+        assert owner == "owner"
+        assert repo == "repo/extra"
+
+    def test_org_with_hyphen(self):
+        from proxy.policy import parse_github_repository
+
+        owner, repo = parse_github_repository("my-org/my-repo")
+        assert owner == "my-org"
+        assert repo == "my-repo"
+
+
+class TestSubstitutePlaceholders:
+    """Tests for substitute_placeholders function."""
+
+    def test_basic_substitution(self):
+        from proxy.policy import substitute_placeholders
+
+        result = substitute_placeholders(
+            "https://github.com/{owner}/{repo}/info/refs",
+            owner="anthropics",
+            repo="egress-filter",
+        )
+        assert result == "https://github.com/anthropics/egress-filter/info/refs"
+
+    def test_no_substitution_when_none(self):
+        from proxy.policy import substitute_placeholders
+
+        result = substitute_placeholders(
+            "https://github.com/{owner}/{repo}",
+            owner=None,
+            repo=None,
+        )
+        assert result == "https://github.com/{owner}/{repo}"
+
+    def test_partial_substitution_owner_only(self):
+        from proxy.policy import substitute_placeholders
+
+        result = substitute_placeholders(
+            "https://github.com/{owner}/{repo}",
+            owner="anthropics",
+            repo=None,
+        )
+        assert result == "https://github.com/anthropics/{repo}"
+
+    def test_partial_substitution_repo_only(self):
+        from proxy.policy import substitute_placeholders
+
+        result = substitute_placeholders(
+            "https://github.com/{owner}/{repo}",
+            owner=None,
+            repo="egress-filter",
+        )
+        assert result == "https://github.com/{owner}/egress-filter"
+
+    def test_multiple_occurrences(self):
+        from proxy.policy import substitute_placeholders
+
+        result = substitute_placeholders(
+            "{owner}/{owner}/{repo}/{repo}",
+            owner="a",
+            repo="b",
+        )
+        assert result == "a/a/b/b"
+
+    def test_no_placeholders(self):
+        from proxy.policy import substitute_placeholders
+
+        result = substitute_placeholders(
+            "https://github.com/fixed/path",
+            owner="unused",
+            repo="unused",
+        )
+        assert result == "https://github.com/fixed/path"
+
+    def test_in_policy_context(self):
+        from proxy.policy import substitute_placeholders
+
+        policy = """
+[exe=/usr/lib/git-core/git-remote-http]
+GET  https://github.com/{owner}/{repo}/info/refs
+POST https://github.com/{owner}/{repo}/git-upload-pack
+"""
+        result = substitute_placeholders(policy, owner="anthropics", repo="egress-filter")
+        assert "https://github.com/anthropics/egress-filter/info/refs" in result
+        assert "https://github.com/anthropics/egress-filter/git-upload-pack" in result
+        assert "{owner}" not in result
+        assert "{repo}" not in result
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
