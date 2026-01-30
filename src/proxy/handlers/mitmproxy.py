@@ -13,12 +13,12 @@ from ..proc import get_proc_info, is_container_process
 class MitmproxyAddon:
     """Mitmproxy addon for PID tracking, connection logging, and policy enforcement."""
 
-    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer | None = None):
+    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer):
         """Initialize the addon.
 
         Args:
             bpf: BPF state for PID lookup
-            enforcer: Policy enforcer (optional, if None policy is not enforced)
+            enforcer: Policy enforcer (use audit_mode=True for observation only)
         """
         self.bpf = bpf
         self.enforcer = enforcer
@@ -28,6 +28,10 @@ class MitmproxyAddon:
 
         Container processes don't have access to mitmproxy's CA cert,
         so we skip MITM and just log the connection with SNI hostname.
+
+        For non-container processes without SNI, we defer the policy decision
+        to the request() hook where we'll have access to the Host header after
+        TLS decryption.
         """
         src_port = (
             data.context.client.peername[1] if data.context.client.peername else 0
@@ -41,17 +45,21 @@ class MitmproxyAddon:
 
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
+        is_container = pid and is_container_process(pid)
 
-        # Policy enforcement
-        verdict = "allow"
-        if self.enforcer:
+        # If we have SNI, enforce now
+        # If no SNI but container (can't decrypt), enforce now with IP/DNS-cache
+        # If no SNI and non-container (can decrypt), defer to request() hook
+        # where we'll have access to the Host header
+        should_enforce_now = sni or is_container
+
+        if should_enforce_now:
             decision = self.enforcer.check_https(
                 dst_ip=dst_ip,
                 dst_port=dst_port,
                 sni=sni,
                 proc=ProcessInfo.from_dict(proc_dict),
             )
-            verdict = decision.verdict.value
 
             if decision.blocked:
                 proxy_logging.log_connection(
@@ -59,36 +67,37 @@ class MitmproxyAddon:
                     dst_ip=dst_ip,
                     dst_port=dst_port,
                     host=sni,
-                    verdict=verdict,
-                    reason=decision.reason,
+                    policy=decision.policy,
                     **proc_dict,
                     src_port=src_port,
                     pid=pid,
                 )
-                # Kill the connection by setting error on the client connection
-                # This properly terminates the connection rather than passing through
-                data.context.client.error = (
-                    f"Blocked by egress policy: {decision.reason}"
-                )
+                # Kill the connection
+                data.context.client.error = "Blocked by egress policy"
                 return
 
-        if pid and is_container_process(pid):
-            # Log the connection with SNI as the hostname
-            proxy_logging.log_connection(
-                type="https",
-                dst_ip=dst_ip,
-                dst_port=dst_port,
-                host=sni,
-                verdict=verdict,
-                **proc_dict,
-                src_port=src_port,
-                pid=pid,
-            )
-            # Skip MITM - pass through encrypted traffic unmodified
-            data.ignore_connection = True
+            if is_container:
+                # Log and skip MITM - pass through encrypted traffic unmodified
+                proxy_logging.log_connection(
+                    type="https",
+                    dst_ip=dst_ip,
+                    dst_port=dst_port,
+                    host=sni,
+                    policy=decision.policy,
+                    **proc_dict,
+                    src_port=src_port,
+                    pid=pid,
+                )
+                data.ignore_connection = True
+        # else: No SNI, can decrypt - defer to request() hook
 
     def request(self, flow: http.HTTPFlow) -> None:
-        """Handle HTTP request - log and optionally enforce policy."""
+        """Handle HTTP/HTTPS request - log and optionally enforce policy.
+
+        For HTTPS, this is called after TLS decryption (MITM). If the original
+        TLS ClientHello had no SNI, this is where we enforce the policy using
+        the Host header from the decrypted request.
+        """
         src_port = flow.client_conn.peername[1] if flow.client_conn.peername else 0
         dst_ip, dst_port = (
             flow.server_conn.address if flow.server_conn.address else ("unknown", 0)
@@ -96,49 +105,47 @@ class MitmproxyAddon:
         url = flow.request.pretty_url
         method = flow.request.method
 
+        # Determine connection type from URL scheme
+        conn_type = "https" if url.startswith("https://") else "http"
+
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
 
-        # Policy enforcement
-        verdict = "allow"
-        if self.enforcer:
-            decision = self.enforcer.check_http(
-                dst_ip=dst_ip,
-                dst_port=dst_port,
-                url=url,
-                method=method,
-                proc=ProcessInfo.from_dict(proc_dict),
-            )
-            verdict = decision.verdict.value
-
-            if decision.blocked:
-                proxy_logging.log_connection(
-                    type="http",
-                    dst_ip=dst_ip,
-                    dst_port=dst_port,
-                    url=url,
-                    method=method,
-                    verdict=verdict,
-                    reason=decision.reason,
-                    **proc_dict,
-                    src_port=src_port,
-                    pid=pid,
-                )
-                # Return 403 Forbidden
-                flow.response = http.Response.make(
-                    403,
-                    f"Blocked by egress policy: {decision.reason}",
-                    {"Content-Type": "text/plain"},
-                )
-                return
-
-        proxy_logging.log_connection(
-            type="http",
+        decision = self.enforcer.check_http(
             dst_ip=dst_ip,
             dst_port=dst_port,
             url=url,
             method=method,
-            verdict=verdict,
+            proc=ProcessInfo.from_dict(proc_dict),
+        )
+
+        if decision.blocked:
+            proxy_logging.log_connection(
+                type=conn_type,
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                url=url,
+                method=method,
+                policy=decision.policy,
+                **proc_dict,
+                src_port=src_port,
+                pid=pid,
+            )
+            # Return 403 Forbidden
+            flow.response = http.Response.make(
+                403,
+                "Blocked by egress policy",
+                {"Content-Type": "text/plain"},
+            )
+            return
+
+        proxy_logging.log_connection(
+            type=conn_type,
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            url=url,
+            method=method,
+            policy=decision.policy,
             **proc_dict,
             src_port=src_port,
             pid=pid,
@@ -154,36 +161,30 @@ class MitmproxyAddon:
         pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
         proc_dict = get_proc_info(pid)
 
-        # Policy enforcement
-        verdict = "allow"
-        if self.enforcer:
-            decision = self.enforcer.check_tcp(
+        decision = self.enforcer.check_tcp(
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            proc=ProcessInfo.from_dict(proc_dict),
+        )
+
+        if decision.blocked:
+            proxy_logging.log_connection(
+                type="tcp",
                 dst_ip=dst_ip,
                 dst_port=dst_port,
-                proc=ProcessInfo.from_dict(proc_dict),
+                policy=decision.policy,
+                **proc_dict,
+                src_port=src_port,
+                pid=pid,
             )
-            verdict = decision.verdict.value
-
-            if decision.blocked:
-                proxy_logging.log_connection(
-                    type="tcp",
-                    dst_ip=dst_ip,
-                    dst_port=dst_port,
-                    verdict=verdict,
-                    reason=decision.reason,
-                    **proc_dict,
-                    src_port=src_port,
-                    pid=pid,
-                )
-                # Kill the flow
-                flow.kill()
-                return
+            flow.kill()
+            return
 
         proxy_logging.log_connection(
             type="tcp",
             dst_ip=dst_ip,
             dst_port=dst_port,
-            verdict=verdict,
+            policy=decision.policy,
             **proc_dict,
             src_port=src_port,
             pid=pid,
@@ -203,16 +204,13 @@ class MitmproxyAddon:
             pid, dst_ip, dst_port = cached
             proc_dict = get_proc_info(pid)
 
-            # Policy enforcement
-            verdict = "allow"
-            if self.enforcer and query_name:
+            if query_name:
                 decision = self.enforcer.check_dns(
                     dst_ip=dst_ip,
                     dst_port=dst_port,
                     query_name=query_name,
                     proc=ProcessInfo.from_dict(proc_dict),
                 )
-                verdict = decision.verdict.value
 
                 if decision.blocked:
                     proxy_logging.log_connection(
@@ -220,8 +218,7 @@ class MitmproxyAddon:
                         dst_ip=dst_ip,
                         dst_port=dst_port,
                         name=query_name,
-                        verdict=verdict,
-                        reason=decision.reason,
+                        policy=decision.policy,
                         **proc_dict,
                         src_port=src_port,
                         pid=pid,
@@ -243,16 +240,16 @@ class MitmproxyAddon:
                     )
                     return
 
-            proxy_logging.log_connection(
-                type="dns",
-                dst_ip=dst_ip,
-                dst_port=dst_port,
-                name=query_name,
-                verdict=verdict,
-                **proc_dict,
-                src_port=src_port,
-                pid=pid,
-            )
+                proxy_logging.log_connection(
+                    type="dns",
+                    dst_ip=dst_ip,
+                    dst_port=dst_port,
+                    name=query_name,
+                    policy=decision.policy,
+                    **proc_dict,
+                    src_port=src_port,
+                    pid=pid,
+                )
         else:
             # Cache miss - nfqueue should have seen the packet first
             proxy_logging.logger.error(
@@ -261,7 +258,7 @@ class MitmproxyAddon:
 
     def dns_response(self, flow: dns.DNSFlow) -> None:
         """Handle DNS response - record IPs for correlation."""
-        if not self.enforcer or not flow.response:
+        if not flow.response:
             return
 
         query_name = flow.request.questions[0].name if flow.request.questions else None

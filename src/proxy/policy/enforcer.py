@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from .dns_cache import DNSIPCache
 from .matcher import ConnectionEvent, PolicyMatcher
+from .types import RUNNER_DEFAULTS, DefaultContext
 
 
 class Verdict(Enum):
@@ -26,7 +27,7 @@ class Decision:
     """Result of a policy check.
 
     Attributes:
-        verdict: Whether the connection is allowed or blocked
+        verdict: Whether the connection is allowed or blocked (accounts for audit mode)
         reason: Human-readable explanation of the decision
         matched_rule: Index of the rule that matched (if allowed)
         hostname: Hostname used for matching (may be from DNS cache)
@@ -46,6 +47,14 @@ class Decision:
     def blocked(self) -> bool:
         """Convenience property for checking if blocked."""
         return self.verdict == Verdict.BLOCK
+
+    @property
+    def policy(self) -> str:
+        """Policy verdict as string: 'allow' if rule matched, 'deny' if not.
+
+        This reflects what the policy says, independent of audit mode.
+        """
+        return "allow" if self.matched_rule is not None else "deny"
 
 
 @dataclass
@@ -432,3 +441,27 @@ class PolicyEnforcer:
         """
         if ips:
             self.dns_cache.add_many(ips, query_name, ttl)
+
+    @classmethod
+    def for_runner(
+        cls,
+        policy_text: str,
+        dns_cache: DNSIPCache | None = None,
+        audit_mode: bool = False,
+    ) -> "PolicyEnforcer":
+        """Create an enforcer configured for GitHub Actions runner.
+
+        This factory method creates an enforcer with the runner cgroup
+        constraint applied to all rules, ensuring policies only match
+        connections from the runner process tree.
+
+        Args:
+            policy_text: The policy text to parse.
+            dns_cache: DNS IP cache for hostname correlation (optional).
+            audit_mode: If True, log but don't block (always allow).
+
+        Returns:
+            PolicyEnforcer configured with runner defaults.
+        """
+        matcher = PolicyMatcher(policy_text, defaults=RUNNER_DEFAULTS)
+        return cls(matcher, dns_cache, audit_mode)

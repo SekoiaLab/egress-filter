@@ -62,12 +62,12 @@ class NfqueueHandler:
     MARK_FASTPATH = 4  # Save to conntrack for fast-path
     MARK_DROP = 0  # Drop the packet (no marks)
 
-    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer | None = None):
+    def __init__(self, bpf: BPFState, enforcer: PolicyEnforcer):
         """Initialize the handler.
 
         Args:
             bpf: BPF state for PID lookup
-            enforcer: Policy enforcer (optional, if None policy is not enforced)
+            enforcer: Policy enforcer (use audit_mode=True for observation only)
         """
         self.bpf = bpf
         self.enforcer = enforcer
@@ -112,48 +112,24 @@ class NfqueueHandler:
                         self.bpf.dns_cache[cache_key] = (pid, dst_ip, dst_port)
                     else:
                         # Non-DNS UDP - check policy and log
-                        verdict = "allow"
+                        decision = self.enforcer.check_udp(
+                            dst_ip=dst_ip,
+                            dst_port=dst_port,
+                            proc=ProcessInfo.from_dict(proc_dict),
+                        )
 
-                        if self.enforcer:
-                            decision = self.enforcer.check_udp(
-                                dst_ip=dst_ip,
-                                dst_port=dst_port,
-                                proc=ProcessInfo.from_dict(proc_dict),
-                            )
-                            verdict = decision.verdict.value
+                        if decision.blocked:
+                            drop = True
 
-                            if decision.blocked:
-                                proxy_logging.log_connection(
-                                    type="udp",
-                                    dst_ip=dst_ip,
-                                    dst_port=dst_port,
-                                    verdict=verdict,
-                                    reason=decision.reason,
-                                    **proc_dict,
-                                    src_port=src_port,
-                                    pid=pid,
-                                )
-                                drop = True
-                            else:
-                                proxy_logging.log_connection(
-                                    type="udp",
-                                    dst_ip=dst_ip,
-                                    dst_port=dst_port,
-                                    verdict=verdict,
-                                    **proc_dict,
-                                    src_port=src_port,
-                                    pid=pid,
-                                )
-                        else:
-                            proxy_logging.log_connection(
-                                type="udp",
-                                dst_ip=dst_ip,
-                                dst_port=dst_port,
-                                verdict=verdict,
-                                **proc_dict,
-                                src_port=src_port,
-                                pid=pid,
-                            )
+                        proxy_logging.log_connection(
+                            type="udp",
+                            dst_ip=dst_ip,
+                            dst_port=dst_port,
+                            policy=decision.policy,
+                            **proc_dict,
+                            src_port=src_port,
+                            pid=pid,
+                        )
         except Exception as e:
             proxy_logging.logger.warning(f"Error processing UDP packet: {e}")
 
