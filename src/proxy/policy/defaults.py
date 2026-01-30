@@ -16,7 +16,7 @@ RUNNER_DEFAULTS = DefaultContext(attrs={"cgroup": RUNNER_CGROUP})
 
 # Default rules for GitHub-hosted runners
 # These are automatically applied unless disabled
-GITHUB_ACTIONS_DEFAULTS = """
+DEFAULT_POLICY = """
 # =============================================================================
 # GitHub Actions Infrastructure Defaults
 # =============================================================================
@@ -37,11 +37,14 @@ GITHUB_ACTIONS_DEFAULTS = """
 # The runner worker process reports job results to GitHub.
 [exe=/home/runner/actions-runner/cached/bin/Runner.Worker]
 results-receiver.actions.githubusercontent.com
+
+# Reset context for user rules that follow
+[]
 """
 
 # Registry of available presets
 PRESETS = {
-    "defaults": GITHUB_ACTIONS_DEFAULTS,
+    "defaults": DEFAULT_POLICY,
 }
 
 
@@ -52,4 +55,4 @@ def get_preset(name: str) -> str | None:
 
 def get_defaults() -> str:
     """Get the default GitHub Actions infrastructure rules."""
-    return GITHUB_ACTIONS_DEFAULTS
+    return DEFAULT_POLICY

@@ -479,27 +479,6 @@ class TestDefaultsIntegration:
         assert len(results["allowed"]) == 0
         assert len(results["blocked"]) == 1
 
-    def test_analyze_with_docker_preset(self):
-        """--include-preset=docker should allow dockerd to registries."""
-        from proxy.policy.defaults import DOCKER_PRESET
-
-        policy = DOCKER_PRESET
-
-        connections = [
-            {
-                "type": "http",
-                "dst_ip": "52.72.142.170",
-                "dst_port": 443,
-                "url": "https://registry-1.docker.io/v2/",
-                "method": "GET",
-                "exe": "/usr/bin/dockerd",
-            }
-        ]
-        results = analyze_connections(policy, connections)
-
-        assert len(results["allowed"]) == 1
-        assert len(results["blocked"]) == 0
-
     def test_combined_defaults_and_user_policy(self):
         """User policy should extend defaults (inheriting cgroup constraint)."""
         from proxy.policy.defaults import get_defaults
