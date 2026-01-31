@@ -29,10 +29,9 @@ from .proc import (
     read_exe,
     read_cmdline,
     read_cgroup,
-    read_environ,
     read_ppid,
-    find_trusted_github_pids,
     get_process_ancestry,
+    get_trusted_github_env,
 )
 from .sudo import disable_sudo, enable_sudo
 
@@ -54,13 +53,7 @@ def get_peer_pid(sock: socket.socket) -> int | None:
 def collect_caller_info(pid: int) -> dict:
     """Collect all identity info for a caller process."""
     ppid = read_ppid(pid)
-
-    # Get trusted GitHub env vars in one read
-    trusted_env = {}
-    for trusted_pid in find_trusted_github_pids(pid):
-        trusted_env = read_environ(trusted_pid)
-        break  # Only need first trusted pid
-
+    trusted_env = get_trusted_github_env(pid)
     ancestry = get_process_ancestry(pid)
 
     return {
