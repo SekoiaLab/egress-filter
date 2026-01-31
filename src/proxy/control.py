@@ -23,7 +23,7 @@ import socket
 import struct
 
 from . import logging as proxy_logging
-from .policy.defaults import RUNNER_WORKER_EXE
+from .policy.defaults import RUNNER_CGROUP, RUNNER_WORKER_EXE
 from .proc import (
     read_exe,
     read_cmdline,
@@ -39,8 +39,8 @@ CONTROL_SOCKET_PATH = "/tmp/egress-filter-control.sock"
 # Parent exe is completely stable - exact path to Runner.Worker
 EXPECTED_PARENT_EXE = RUNNER_WORKER_EXE
 
-# Cgroup is stable for GHA hosted runners
-EXPECTED_CGROUP = "0::/system.slice/hosted-compute-agent.service"
+# Cgroup is stable for GHA hosted runners (v2 format: "0::" + path)
+EXPECTED_CGROUP = f"0::{RUNNER_CGROUP}"
 
 # Node exe - exact path, must match 'using' in action.yml (currently node24)
 EXPECTED_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
