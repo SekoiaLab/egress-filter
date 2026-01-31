@@ -11,6 +11,10 @@ inputs:
     description: 'Run in audit mode (log only, do not block)'
     required: false
     default: 'false'
+  allow-sudo:
+    description: 'Allow sudo for the runner user (less secure, needed for some actions like Tailscale)'
+    required: false
+    default: 'false'
 
 runs:
   using: 'node24'

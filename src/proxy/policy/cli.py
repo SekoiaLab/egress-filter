@@ -287,9 +287,9 @@ def main():
         help="Analyze a connections log against the policy (test before deploying)",
     )
     parser.add_argument(
-        "--include-defaults",
+        "--no-defaults",
         action="store_true",
-        help="Include GitHub Actions infrastructure defaults (local DNS, git, actions runner)",
+        help="Disable GitHub Actions infrastructure defaults (local DNS, git, actions runner)",
     )
     parser.add_argument(
         "--include-preset",
@@ -339,7 +339,7 @@ def main():
         # Build combined policy from defaults, presets, and workflow policies
         policy_parts = []
 
-        if args.include_defaults:
+        if not args.no_defaults:
             policy_parts.append(get_defaults())
 
         if args.include_preset:
@@ -379,7 +379,7 @@ def main():
         policy_parts = []
 
         # Include defaults if requested
-        if args.include_defaults:
+        if not args.no_defaults:
             policy_parts.append(get_defaults())
 
         # Include presets if requested

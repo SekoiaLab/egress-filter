@@ -135,11 +135,18 @@ start_proxy() {
     # restores it on shutdown via the authenticated control socket.
     #
     # This is done LAST so all setup is complete before we lose sudo.
-    local sudoers_file="/etc/sudoers.d/runner"
-    if [ -f "$sudoers_file" ]; then
-        cp "$sudoers_file" "$SUDOERS_BACKUP"
-        truncate -s 0 "$sudoers_file"
-        echo "Sudo disabled for runner user"
+    #
+    # Can be skipped with EGRESS_ALLOW_SUDO=1 for workflows that need sudo
+    # (e.g., Tailscale action). This is less secure but sometimes necessary.
+    if [ "${EGRESS_ALLOW_SUDO:-0}" = "1" ]; then
+        echo "Sudo left enabled (allow-sudo: true)"
+    else
+        local sudoers_file="/etc/sudoers.d/runner"
+        if [ -f "$sudoers_file" ]; then
+            cp "$sudoers_file" "$SUDOERS_BACKUP"
+            truncate -s 0 "$sudoers_file"
+            echo "Sudo disabled for runner user"
+        fi
     fi
 }
 

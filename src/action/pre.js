@@ -83,6 +83,7 @@ async function run() {
     // Read action inputs
     const policy = core.getInput('policy') || '';
     const audit = core.getInput('audit') === 'true';
+    const allowSudo = core.getInput('allow-sudo') === 'true';
 
     // Write policy to temp file (multiline string)
     const policyFile = '/tmp/egress-policy.txt';
@@ -101,6 +102,7 @@ async function run() {
       `EGRESS_FILTER_ROOT=${actionPath}`,
       `EGRESS_POLICY_FILE=${policyFile}`,
       `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,
+      `EGRESS_ALLOW_SUDO=${allowSudo ? '1' : '0'}`,
     ];
 
     core.info('Installing dependencies...');
