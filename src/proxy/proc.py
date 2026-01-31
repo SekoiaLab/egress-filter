@@ -162,7 +162,8 @@ def find_trusted_github_pids(pid: int) -> list[int]:
     # Trust only the direct child of Runner.Worker (the step process)
     # Runner.Worker itself has no GITHUB_* env vars
     if runner_idx > 0:
-        return [ancestry[runner_idx - 1][0]]  # Direct child only
+        direct_child = ancestry[runner_idx - 1]
+        return [direct_child[0]]  # Direct child only
 
     return []  # Process is Runner.Worker itself, no env vars to trust
 
