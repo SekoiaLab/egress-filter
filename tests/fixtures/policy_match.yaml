@@ -415,6 +415,204 @@ tests:
         verdict: block
 
   # =============================================================================
+  # URL rules with IP addresses
+  # =============================================================================
+
+  - name: URL with IP address matches HTTP request to IP
+    policy: |
+      http://168.63.129.16/*
+    connections:
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://168.63.129.16/machine
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://168.63.129.16/health
+        verdict: allow
+      # Different IP - should not match
+      - event:
+          type: http
+          dst_ip: 10.0.0.1
+          dst_port: 80
+          url: http://10.0.0.1/machine
+        verdict: block
+
+  - name: URL with IP address does NOT match hostname-based request
+    policy: |
+      http://168.63.129.16/*
+    connections:
+      # Even if example.com resolves to 168.63.129.16, URL matching is string-based
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://example.com/api
+        verdict: block
+
+  - name: URL with IP address and explicit port
+    policy: |
+      http://168.63.129.16:32526/*
+    connections:
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 32526
+          url: http://168.63.129.16:32526/health
+        verdict: allow
+      # Wrong port in URL - should not match
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://168.63.129.16/health
+        verdict: block
+
+  - name: URL with IP address and method restriction
+    policy: |
+      POST http://192.168.1.1/api/submit
+    connections:
+      - event:
+          type: http
+          dst_ip: 192.168.1.1
+          dst_port: 80
+          url: http://192.168.1.1/api/submit
+          method: POST
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 192.168.1.1
+          dst_port: 80
+          url: http://192.168.1.1/api/submit
+          method: GET
+        verdict: block
+
+  - name: URL with IP address and any method
+    policy: |
+      * http://10.0.0.1/api/*
+    connections:
+      - event:
+          type: http
+          dst_ip: 10.0.0.1
+          dst_port: 80
+          url: http://10.0.0.1/api/users
+          method: GET
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 10.0.0.1
+          dst_port: 80
+          url: http://10.0.0.1/api/users
+          method: POST
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 10.0.0.1
+          dst_port: 80
+          url: http://10.0.0.1/api/users
+          method: DELETE
+        verdict: allow
+
+  - name: IP address network rule still matches HTTP at TCP level
+    policy: |
+      168.63.129.16:80
+    connections:
+      # Network rules match based on IP/port, regardless of URL content
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://168.63.129.16/anything
+        verdict: allow
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://example.com/anything
+        verdict: allow
+
+  # =============================================================================
+  # IP vs hostname URL matching - safeguards against crossover
+  # =============================================================================
+
+  - name: Hostname URL rule does NOT match IP-based request (even same IP)
+    policy: |
+      http://example.com/*
+    connections:
+      # Hostname-based rule should not match request with IP in URL
+      # even if the IP is what example.com resolves to
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://93.184.216.34/path
+        verdict: block
+      # But should match hostname-based request
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://example.com/path
+        verdict: allow
+
+  - name: IP URL rule does NOT match hostname-based request (strict string match)
+    policy: |
+      http://93.184.216.34/*
+    connections:
+      # IP-based rule should not match request with hostname in URL
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://example.com/path
+        verdict: block
+      # But should match IP-based request
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://93.184.216.34/path
+        verdict: allow
+
+  - name: Mixed policy with both IP and hostname rules
+    policy: |
+      http://168.63.129.16/*
+      http://example.com/*
+    connections:
+      # IP rule matches IP request
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://168.63.129.16/api
+        verdict: allow
+      # Hostname rule matches hostname request
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://example.com/api
+        verdict: allow
+      # No crossover - hostname request to IP address
+      - event:
+          type: http
+          dst_ip: 168.63.129.16
+          dst_port: 80
+          url: http://wireserver.local/api
+        verdict: block
+      # No crossover - IP request when only hostname rule exists
+      - event:
+          type: http
+          dst_ip: 93.184.216.34
+          dst_port: 80
+          url: http://93.184.216.34/api
+        verdict: block
+
+  # =============================================================================
   # HTTP method matching
   # =============================================================================
 

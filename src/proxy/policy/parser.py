@@ -5,6 +5,7 @@ what syntax is valid - validation happens at parse time, not after.
 """
 
 import logging
+from urllib.parse import urlparse
 
 from parsimonious.exceptions import ParseError
 from parsimonious.grammar import Grammar
@@ -41,12 +42,13 @@ url_base_header = url_base kv_attrs?
 method_header   = method_attr kv_attrs?
 port_proto_header = port_proto_attr kv_attrs?
 kv_only_header  = kv_attr (ws+ kv_attr)*
-url_base        = scheme "://" hostname url_port? url_path?
+url_base        = scheme "://" url_host url_port? url_path?
 port_proto_attr = port_attr proto_attr?
 
 rule            = ws* (url_rule / path_rule / network_rule) inline_comment? ws*
 
-url_rule        = (method_attr ws+)? scheme "://" hostname url_port? url_path kv_attrs?
+url_rule        = (method_attr ws+)? scheme "://" url_host url_port? url_path kv_attrs?
+url_host        = ipv4 / hostname
 scheme          = "https" / "http"
 url_port        = ":" ~"[0-9]+"
 url_path        = "/" path_rest
@@ -188,7 +190,13 @@ class PolicyVisitor(NodeVisitor):
                     if isinstance(attr, dict):
                         if "url_base" in attr:
                             self.ctx.url_base = attr["url_base"]
-                            if attr["url_base"].startswith("https://"):
+                            # Extract port from URL if present, else use scheme default
+                            url_base = attr["url_base"]
+                            # Check for explicit port (e.g., http://host:8080)
+                            parsed = urlparse(url_base)
+                            if parsed.port:
+                                self.ctx.port = [parsed.port]
+                            elif url_base.startswith("https://"):
                                 self.ctx.port = [443]
                             else:
                                 self.ctx.port = [80]
@@ -392,8 +400,8 @@ class PolicyVisitor(NodeVisitor):
         return rule
 
     def visit_url_rule(self, node, visited_children):
-        # url_rule = (method_attr ws+)? scheme "://" hostname url_port? url_path kv_attrs?
-        method_part, scheme, _, hostname, url_port, url_path, kv_attrs = (
+        # url_rule = (method_attr ws+)? scheme "://" url_host url_port? url_path kv_attrs?
+        method_part, scheme, _, url_host, url_port, url_path, kv_attrs = (
             visited_children
         )
 
@@ -413,11 +421,11 @@ class PolicyVisitor(NodeVisitor):
 
         # Build full URL as target (without method prefix)
         scheme_text = _get_text(scheme)
-        hostname_text = _get_text(hostname)
+        host_text = _get_text(url_host)  # Can be hostname or IP address
         port_text = _get_text(url_port)
         path_text = _get_text(url_path)
 
-        target = f"{scheme_text}://{hostname_text}{port_text}{path_text}"
+        target = f"{scheme_text}://{host_text}{port_text}{path_text}"
 
         # Extract explicit port if present
         port = None
