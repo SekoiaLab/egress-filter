@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 At the start of each session, check GitHub Issues for pending tasks: `gh issue list`
 
+## Workflow
+
+- Do most work in **feature branches** with an associated PR for review
+- Create the PR early (draft if needed) and push updates as you go
+- When TODOs or future improvements come up, suggest creating GitHub Issues rather than inline comments or local notes
+- If the user gets sidetracked while working on a feature branch (e.g., unrelated refactors, new features, documentation cleanup), gently remind them to stay focused or suggest creating an issue for the tangent
+
 ## Project Overview
 
 eBPF-based connection-to-PID tracker integrated with mitmproxy transparent proxy. Attributes every network connection to the process that made it.
