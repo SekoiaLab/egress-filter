@@ -23,7 +23,7 @@ import socket
 import struct
 
 from . import logging as proxy_logging
-from .policy.defaults import RUNNER_CGROUP, RUNNER_WORKER_EXE
+from .policy.gha import NODE24_EXE, RUNNER_CGROUP, RUNNER_WORKER_EXE
 from .proc import (
     read_exe,
     read_cmdline,
@@ -42,8 +42,8 @@ EXPECTED_PARENT_EXE = RUNNER_WORKER_EXE
 # Cgroup is stable for GHA hosted runners (v2 format: "0::" + path)
 EXPECTED_CGROUP = f"0::{RUNNER_CGROUP}"
 
-# Node exe - exact path, must match 'using' in action.yml (currently node24)
-EXPECTED_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
+# Node exe - must match 'using' in action.yml
+EXPECTED_EXE = NODE24_EXE
 
 # GITHUB_ACTION is passed from pre-hook via environment.
 # Format varies: __<owner>_<repo> for default step id, or custom id if user specifies one.

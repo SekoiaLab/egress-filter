@@ -1,6 +1,7 @@
 """Policy parsing and matching engine."""
 
-from .defaults import RUNNER_CGROUP, RUNNER_DEFAULTS
+from .defaults import RUNNER_DEFAULTS
+from .gha import NODE24_EXE, RUNNER_CGROUP, RUNNER_WORKER_EXE
 from .dns_cache import DNSIPCache
 from .enforcer import Decision, PolicyEnforcer, ProcessInfo, Verdict
 from .matcher import ConnectionEvent, PolicyMatcher, match_rule
@@ -26,7 +27,9 @@ __all__ = [
     "HeaderContext",
     "DefaultContext",
     "SECURE_DEFAULTS",
+    "NODE24_EXE",
     "RUNNER_CGROUP",
+    "RUNNER_WORKER_EXE",
     "RUNNER_DEFAULTS",
     # Parser
     "parse_policy",

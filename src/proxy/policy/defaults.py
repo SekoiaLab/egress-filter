@@ -5,13 +5,8 @@ to function properly. They can be auto-included with `include: defaults` or
 via the enforcer's `include_defaults=True` option.
 """
 
+from .gha import RUNNER_CGROUP
 from .types import DefaultContext
-
-# GitHub Actions runner cgroup - used to scope rules to the runner process tree
-RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
-
-# GitHub Actions runner worker executable path
-RUNNER_WORKER_EXE = "/home/runner/actions-runner/cached/bin/Runner.Worker"
 
 # Defaults for GitHub Actions runner (includes cgroup constraint)
 # This ensures all rules only match connections from the runner process tree

@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from proxy.policy.defaults import RUNNER_CGROUP, RUNNER_WORKER_EXE
+from proxy.policy.gha import RUNNER_CGROUP, RUNNER_WORKER_EXE
 
 
 # =============================================================================
