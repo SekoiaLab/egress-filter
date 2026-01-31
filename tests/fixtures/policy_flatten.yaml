@@ -197,6 +197,70 @@ tests:
         attrs: {}
 
   # =============================================================================
+  # URL rules with IP addresses
+  # =============================================================================
+
+  - name: URL with IP address (HTTP)
+    policy: |
+      http://168.63.129.16/*
+    rules:
+      - type: url
+        target: http://168.63.129.16/*
+        port: [80]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  - name: URL with IP address and port
+    policy: |
+      http://168.63.129.16:8080/api/*
+    rules:
+      - type: url
+        target: http://168.63.129.16:8080/api/*
+        port: [8080]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  - name: URL with IP address and explicit method
+    policy: |
+      POST http://192.168.1.1/submit
+    rules:
+      - type: url
+        target: http://192.168.1.1/submit
+        port: [80]
+        protocol: tcp
+        methods: ["POST"]
+        url_base: null
+        attrs: {}
+
+  - name: URL with IP address and any method
+    policy: |
+      * http://10.0.0.1/api/*
+    rules:
+      - type: url
+        target: http://10.0.0.1/api/*
+        port: [80]
+        protocol: tcp
+        methods: ["*"]
+        url_base: null
+        attrs: {}
+
+  - name: URL with IP address HTTPS
+    policy: |
+      https://192.168.0.1/secure/*
+    rules:
+      - type: url
+        target: https://192.168.0.1/secure/*
+        port: [443]
+        protocol: tcp
+        methods: ["GET", "HEAD"]
+        url_base: null
+        attrs: {}
+
+  # =============================================================================
   # Headers - port and protocol defaults
   # =============================================================================
 
@@ -497,6 +561,40 @@ tests:
         protocol: tcp
         methods: ["GET", "HEAD"]
         url_base: https://api.github.com
+        attrs: {}
+
+  - name: URL base header with IP address
+    policy: |
+      [http://168.63.129.16]
+      GET /machine
+      POST /health
+    rules:
+      - type: path
+        target: /machine
+        port: [80]
+        protocol: tcp
+        methods: ["GET"]
+        url_base: http://168.63.129.16
+        attrs: {}
+      - type: path
+        target: /health
+        port: [80]
+        protocol: tcp
+        methods: ["POST"]
+        url_base: http://168.63.129.16
+        attrs: {}
+
+  - name: URL base header with IP address and port
+    policy: |
+      [http://168.63.129.16:32526]
+      * /*
+    rules:
+      - type: path
+        target: /*
+        port: [32526]
+        protocol: tcp
+        methods: ["*"]
+        url_base: http://168.63.129.16:32526
         attrs: {}
 
   # =============================================================================
