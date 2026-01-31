@@ -1,3 +1,4 @@
+const artifact = require('@actions/artifact');
 const cache = require('@actions/cache');
 const core = require('@actions/core');
 const exec = require('@actions/exec');
@@ -94,6 +95,35 @@ async function shutdownProxy() {
   });
 }
 
+const CONNECTION_LOG_PATH = '/tmp/connections.jsonl';
+
+async function uploadConnectionLog() {
+  const uploadLog = core.getInput('upload-log');
+  if (uploadLog !== 'true') {
+    core.info('Connection log upload disabled');
+    return;
+  }
+
+  if (!fs.existsSync(CONNECTION_LOG_PATH)) {
+    core.warning('Connection log not found, skipping upload');
+    return;
+  }
+
+  core.info('Uploading connection log as artifact...');
+  try {
+    const client = new artifact.DefaultArtifactClient();
+    const { id, size } = await client.uploadArtifact(
+      'egress-connections',
+      [CONNECTION_LOG_PATH],
+      '/tmp',
+      { retentionDays: 30 }
+    );
+    core.info(`Uploaded artifact (id: ${id}, size: ${size} bytes)`);
+  } catch (error) {
+    core.warning(`Failed to upload connection log: ${error.message}`);
+  }
+}
+
 async function run() {
   const actionPath = getActionPath();
   const setupDir = path.join(actionPath, 'src', 'setup');
@@ -117,6 +147,9 @@ async function run() {
   await exec.exec('sudo', [path.join(setupDir, 'proxy.sh'), 'stop'], {
     ignoreReturnCode: true,
   });
+
+  // Upload connection log (after iptables removed, so no policy restrictions)
+  await uploadConnectionLog();
 
   // Save cache after cleanup
   await saveVenvCache(actionPath);
