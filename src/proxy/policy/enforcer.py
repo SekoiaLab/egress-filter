@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from .defaults import RUNNER_DEFAULTS, get_defaults
 from .dns_cache import DNSIPCache
 from .matcher import ConnectionEvent, PolicyMatcher
+from .parser import parse_github_repository, substitute_placeholders
 from .types import DefaultContext
 
 
@@ -450,6 +451,7 @@ class PolicyEnforcer:
         dns_cache: DNSIPCache | None = None,
         audit_mode: bool = False,
         include_defaults: bool = True,
+        github_repository: str | None = None,
     ) -> "PolicyEnforcer":
         """Create an enforcer configured for GitHub Actions runner.
 
@@ -462,10 +464,16 @@ class PolicyEnforcer:
             dns_cache: DNS IP cache for hostname correlation (optional).
             audit_mode: If True, log but don't block (always allow).
             include_defaults: If True, prepend GitHub Actions infrastructure defaults.
+            github_repository: Value of GITHUB_REPOSITORY env var (format: "owner/repo").
+                Used to substitute {owner} and {repo} placeholders in policy.
 
         Returns:
             PolicyEnforcer configured with runner defaults.
         """
+        # Substitute {owner} and {repo} placeholders
+        owner, repo = parse_github_repository(github_repository)
+        policy_text = substitute_placeholders(policy_text, owner=owner, repo=repo)
+
         if include_defaults:
             policy_text = get_defaults() + "\n" + policy_text
         matcher = PolicyMatcher(policy_text, defaults=RUNNER_DEFAULTS)

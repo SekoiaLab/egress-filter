@@ -85852,6 +85852,7 @@ async function run() {
     const sudoEnv = [
       `PATH=${process.env.PATH}`,
       `GITHUB_ENV=${process.env.GITHUB_ENV}`,
+      `GITHUB_REPOSITORY=${process.env.GITHUB_REPOSITORY || ''}`,
       `EGRESS_FILTER_ROOT=${actionPath}`,
       `EGRESS_POLICY_FILE=${policyFile}`,
       `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,

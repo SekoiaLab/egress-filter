@@ -173,6 +173,7 @@ async def async_main():
     # Load policy and create enforcer
     policy_file = os.environ.get("EGRESS_POLICY_FILE", "")
     audit_mode = os.environ.get("EGRESS_AUDIT_MODE", "0") == "1"
+    github_repository = os.environ.get("GITHUB_REPOSITORY", "")
 
     policy_text = ""
     if policy_file and os.path.exists(policy_file):
@@ -183,7 +184,11 @@ async def async_main():
     else:
         proxy_logging.logger.info("No policy file, using empty policy")
 
-    enforcer = PolicyEnforcer.for_runner(policy_text, audit_mode=audit_mode)
+    enforcer = PolicyEnforcer.for_runner(
+        policy_text,
+        audit_mode=audit_mode,
+        github_repository=github_repository or None,
+    )
     proxy_logging.logger.info(f"Policy enforcer created (audit_mode={audit_mode})")
 
     # Create tasks
