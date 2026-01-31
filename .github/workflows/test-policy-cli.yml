@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Setup egress filter (monitor mode)
         uses: gregclermont/egress-filter@test
+        with:
+          audit: true
 
       - uses: actions/checkout@v4
         with:
@@ -162,9 +164,9 @@ jobs:
                       [:80]
                       example.com
 
-                      # Azure wireserver (WALinuxAgent)
-                      [:*]
-                      168.63.129.16
+                      # Azure wireserver (WALinuxAgent) - HTTP requests need URL rules
+                      * http://168.63.129.16/*
+                      * http://168.63.129.16:32526/*
           EOF
 
           PYTHONPATH=src python -m proxy.policy permissive-workflow.yml --analyze-log connections.jsonl -v
@@ -278,17 +280,19 @@ jobs:
                 - uses: owner/egress-filter@v1
                   with:
                     policy: |
-                      # Minimal user policy - only allow what the test scripts need
-                      # Let --include-defaults handle GitHub infrastructure
+                      # User policy for what this workflow needs
+                      # --include-defaults adds runner infrastructure (DNS, Azure, results-receiver)
 
-                      # Test connections (not covered by defaults)
+                      # GitHub access for checkout
+                      github.com
+                      [:22]
+                      140.82.0.0/16
+
+                      # Test connections
+                      [:80]
                       example.com
                       [:*/udp]
                       8.8.8.8
-
-                      # TCP test to github.com:22 - use CIDR since CLI doesn't have DNS correlation
-                      [:22]
-                      140.82.0.0/16
           EOF
 
           echo "=== Analysis with --include-defaults ==="
@@ -298,10 +302,10 @@ jobs:
           if [ $exit_code -ne 0 ]; then
             echo ""
             echo "ERROR: Expected exit code 0 with --include-defaults, got $exit_code"
-            echo "This likely means the defaults need to be updated to cover more GHA infrastructure"
+            echo "Defaults cover runner infrastructure; user policy must cover action needs"
             exit 1
           fi
-          echo "PASS: --include-defaults covered all GitHub infrastructure connections"
+          echo "PASS: Combined policy (user + defaults) covers all connections"
 
       # Test 8: URL and path rules
       - name: "Test: URL and path rule parsing"

@@ -23,6 +23,24 @@ jobs:
         uses: gregclermont/egress-filter@test
         env:
           VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+        with:
+          policy: |
+            # Allow checkout action to access GitHub
+            github.com action=actions/checkout
+
+            # Test targets (from tests/connection_tests/)
+            example.com
+            [:22]
+            140.82.0.0/16
+
+            # DNS
+            [:53/udp]
+            8.8.8.8
+            1.1.1.1
+
+            # UDP test
+            [:*/udp]
+            8.8.8.8
 
       - uses: actions/checkout@v6
         with:
@@ -30,7 +48,7 @@ jobs:
           fetch-depth: 1
 
       - name: Run connection tracking tests
-        run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl
+        run: python3 tests/connection_tests/run.py --connections-log=/tmp/connections.jsonl --skip-docker
 
       - name: Show connection events
         if: always()

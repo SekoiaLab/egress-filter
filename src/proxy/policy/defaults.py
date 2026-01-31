@@ -10,6 +10,9 @@ from .types import DefaultContext
 # GitHub Actions runner cgroup - used to scope rules to the runner process tree
 RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
 
+# GitHub Actions runner worker executable path
+RUNNER_WORKER_EXE = "/home/runner/actions-runner/cached/bin/Runner.Worker"
+
 # Defaults for GitHub Actions runner (includes cgroup constraint)
 # This ensures all rules only match connections from the runner process tree
 RUNNER_DEFAULTS = DefaultContext(attrs={"cgroup": RUNNER_CGROUP})
@@ -34,8 +37,7 @@ DEFAULT_POLICY = """
 168.63.129.16:80|32526 cgroup=/azure.slice/walinuxagent.service
 
 # GitHub Actions results receiver (job status reporting)
-# The runner worker process reports job results to GitHub.
-[exe=/home/runner/actions-runner/cached/bin/Runner.Worker]
+# Various runner processes (Runner.Worker, action node processes) need this.
 results-receiver.actions.githubusercontent.com
 
 # Reset context for user rules that follow
