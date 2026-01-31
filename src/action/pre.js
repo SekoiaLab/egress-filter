@@ -10,24 +10,24 @@ const path = require('path');
 const getActionPath = () => [__dirname, '..', '..'].reduce((a, b) => path.resolve(a, b));
 
 function checkPlatform() {
-  // This action only supports GitHub-hosted Ubuntu runners
+  // This action only supports GitHub-hosted Ubuntu 24.04 runners
   if (os.platform() !== 'linux') {
     core.setFailed(`This action only supports Linux runners, got: ${os.platform()}`);
     process.exit(1);
   }
 
+  if (process.env.RUNNER_ENVIRONMENT !== 'github-hosted') {
+    core.setFailed(`This action only supports GitHub-hosted runners, got: ${process.env.RUNNER_ENVIRONMENT || 'unknown'}`);
+    process.exit(1);
+  }
+
   const imageOS = process.env.ImageOS;
-  if (!imageOS) {
-    core.setFailed('This action only supports GitHub-hosted runners (ImageOS not set)');
+  if (imageOS !== 'ubuntu24') {
+    core.setFailed(`This action only supports Ubuntu 24.04 (ubuntu24), got: ${imageOS || 'unknown'}`);
     process.exit(1);
   }
 
-  if (!imageOS.startsWith('ubuntu')) {
-    core.setFailed(`This action only supports Ubuntu runners, got: ${imageOS}`);
-    process.exit(1);
-  }
-
-  core.info(`Runner image: ${imageOS}`);
+  core.info(`Runner: ${process.env.RUNNER_ENVIRONMENT}, image: ${imageOS}`);
 }
 
 function hashFile(filePath) {
@@ -80,6 +80,14 @@ async function run() {
     // Try to restore .venv from cache
     await restoreVenvCache(actionPath);
 
+    // Read action inputs
+    const policy = core.getInput('policy') || '';
+    const audit = core.getInput('audit') === 'true';
+
+    // Write policy to temp file (multiline string)
+    const policyFile = '/tmp/egress-policy.txt';
+    fs.writeFileSync(policyFile, policy);
+
     // Build environment variables to pass through sudo.
     // We exclude HOME so that root uses its own home directory (/root),
     // preventing cache/config directories from being created as root-owned
@@ -88,7 +96,10 @@ async function run() {
     const sudoEnv = [
       `PATH=${process.env.PATH}`,
       `GITHUB_ENV=${process.env.GITHUB_ENV}`,
+      `GITHUB_REPOSITORY=${process.env.GITHUB_REPOSITORY || ''}`,
       `EGRESS_FILTER_ROOT=${actionPath}`,
+      `EGRESS_POLICY_FILE=${policyFile}`,
+      `EGRESS_AUDIT_MODE=${audit ? '1' : '0'}`,
     ];
 
     core.info('Installing dependencies...');
