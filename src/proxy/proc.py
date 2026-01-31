@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+from proxy.policy.defaults import RUNNER_CGROUP, RUNNER_WORKER_EXE
+
 
 # =============================================================================
 # Low-level /proc readers
@@ -93,10 +95,6 @@ def get_cgroup_path(pid: int) -> str | None:
     return None
 
 
-# Backward compatibility alias
-get_cgroup = get_cgroup_path
-
-
 def is_container_process(pid: int) -> bool:
     """Check if a process is running inside a Docker container."""
     cgroup = get_cgroup_path(pid)
@@ -105,30 +103,20 @@ def is_container_process(pid: int) -> bool:
     return "docker-" in cgroup or "/docker/" in cgroup
 
 
-def read_comm(pid: int) -> str:
-    """Read process name (comm) from /proc/[pid]/stat."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-        # Format: pid (comm) state ppid ...
-        # comm can contain spaces and parens, so parse carefully
-        start = stat.index("(") + 1
-        end = stat.rindex(")")
-        return stat[start:end]
-    except (OSError, FileNotFoundError, ValueError, IndexError):
-        return ""
-
-
 def get_process_ancestry(pid: int, max_depth: int = 10) -> list[tuple[int, str]]:
-    """Get process ancestry as list of (pid, comm) tuples."""
+    """Get process ancestry as list of (pid, exe) tuples.
+
+    Uses full executable path instead of comm to reduce spoofing risk.
+    """
     ancestry = []
     current_pid = pid
 
     for _ in range(max_depth):
-        comm = read_comm(current_pid)
-        if not comm:
+        exe = read_exe(current_pid)
+        if not exe:
             break
 
-        ancestry.append((current_pid, comm))
+        ancestry.append((current_pid, exe))
 
         ppid = read_ppid(current_pid)
         if not ppid or ppid <= 1:  # Reached init or error
@@ -138,49 +126,84 @@ def get_process_ancestry(pid: int, max_depth: int = 10) -> list[tuple[int, str]]
     return ancestry
 
 
-def get_github_step(pid: int) -> str | None:
-    """Get GitHub Actions step identifier by walking up the process tree."""
-    visited = set()
-    while pid and pid > 1 and pid not in visited:
-        visited.add(pid)
-        try:
-            env = read_environ(pid)
-            job = env.get("GITHUB_JOB", "")
-            action = env.get("GITHUB_ACTION", "")
-            if job and action:
-                return f"{job}.{action}"
-            # Walk up to parent
-            ppid = read_ppid(pid)
-            if not ppid:
-                break
-            pid = ppid
-        except Exception:
+def is_runner_process(pid: int) -> bool:
+    """Check if process is in the runner cgroup (quick filter)."""
+    cgroup = get_cgroup_path(pid)
+    return cgroup == RUNNER_CGROUP if cgroup else False
+
+
+def find_trusted_github_pids(pid: int) -> list[int]:
+    """Find PIDs we trust for GitHub env vars (direct child of Runner.Worker).
+
+    Runner.Worker itself does NOT have GITHUB_* env vars - it sets them
+    in the child process environment when spawning steps.
+
+    Returns empty list if:
+    - Process is not in runner cgroup (Docker, Azure agent, etc.)
+    - Runner.Worker not found in ancestry
+    - Process is Runner.Worker itself (no direct child)
+    """
+    # Quick cgroup check first
+    if not is_runner_process(pid):
+        return []
+
+    ancestry = get_process_ancestry(pid)
+
+    # Find Runner.Worker in ancestry (using full exe path to prevent spoofing)
+    runner_idx = None
+    for i, (p, exe) in enumerate(ancestry):
+        if exe == RUNNER_WORKER_EXE:
+            runner_idx = i
             break
+
+    if runner_idx is None:
+        return []  # Not under runner worker
+
+    # Trust only the direct child of Runner.Worker (the step process)
+    # Runner.Worker itself has no GITHUB_* env vars
+    if runner_idx > 0:
+        return [ancestry[runner_idx - 1][0]]  # Direct child only
+
+    return []  # Process is Runner.Worker itself, no env vars to trust
+
+
+def get_trusted_github_env(pid: int, key: str) -> str | None:
+    """Get a GitHub env var only from trusted ancestry.
+
+    Only trusts env vars from Runner.Worker or its direct child,
+    preventing spoofing by malicious descendant processes.
+    """
+    for trusted_pid in find_trusted_github_pids(pid):
+        env = read_environ(trusted_pid)
+        value = env.get(key, "")
+        if value:
+            return value
+    return None
+
+
+def get_github_step(pid: int) -> str | None:
+    """Get GitHub Actions step identifier from trusted ancestry.
+
+    Only trusts env vars from Runner.Worker or its direct child,
+    preventing spoofing by malicious descendant processes.
+    """
+    job = get_trusted_github_env(pid, "GITHUB_JOB")
+    action = get_trusted_github_env(pid, "GITHUB_ACTION")
+    if job and action:
+        return f"{job}.{action}"
     return None
 
 
 def get_github_action_repo(pid: int) -> str | None:
-    """Get GitHub Actions action repository by walking up the process tree.
+    """Get GitHub Actions action repository from trusted ancestry.
 
     Returns the value of GITHUB_ACTION_REPOSITORY (e.g., "actions/checkout")
     which identifies the action being run, regardless of custom step ids.
+
+    Only trusts env vars from Runner.Worker or its direct child,
+    preventing spoofing by malicious descendant processes.
     """
-    visited = set()
-    while pid and pid > 1 and pid not in visited:
-        visited.add(pid)
-        try:
-            env = read_environ(pid)
-            action_repo = env.get("GITHUB_ACTION_REPOSITORY", "")
-            if action_repo:
-                return action_repo
-            # Walk up to parent
-            ppid = read_ppid(pid)
-            if not ppid:
-                break
-            pid = ppid
-        except Exception:
-            break
-    return None
+    return get_trusted_github_env(pid, "GITHUB_ACTION_REPOSITORY")
 
 
 def get_proc_info(pid: int | None) -> dict:

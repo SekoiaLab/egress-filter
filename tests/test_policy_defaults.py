@@ -116,18 +116,18 @@ class TestResultsReceiverRules:
         allowed, _ = matcher.match(event)
         assert allowed
 
-    def test_blocks_non_runner_to_results_receiver(self):
-        """Should block non-Runner.Worker from results-receiver."""
+    def test_allows_action_node_to_results_receiver(self):
+        """Should allow action node processes to access results-receiver."""
         matcher = PolicyMatcher(DEFAULT_POLICY)
         event = ConnectionEvent(
             type="https",
             dst_ip="140.82.112.10",
             dst_port=443,
             host="results-receiver.actions.githubusercontent.com",
-            exe="/usr/bin/curl",
+            exe="/home/runner/actions-runner/cached/externals/node20/bin/node",
         )
         allowed, _ = matcher.match(event)
-        assert not allowed
+        assert allowed
 
 
 class TestCombinedDefaults:

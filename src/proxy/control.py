@@ -23,23 +23,24 @@ import socket
 import struct
 
 from . import logging as proxy_logging
+from .policy.defaults import RUNNER_CGROUP, RUNNER_WORKER_EXE
 from .proc import (
     read_exe,
     read_cmdline,
-    read_environ,
     read_cgroup,
     read_ppid,
     get_process_ancestry,
+    get_trusted_github_env,
 )
 
 CONTROL_SOCKET_PATH = "/tmp/egress-filter-control.sock"
 
 # Exact expected values for stable fields (from actual GHA runner observation)
 # Parent exe is completely stable - exact path to Runner.Worker
-EXPECTED_PARENT_EXE = "/home/runner/actions-runner/cached/bin/Runner.Worker"
+EXPECTED_PARENT_EXE = RUNNER_WORKER_EXE
 
-# Cgroup is stable for GHA hosted runners
-EXPECTED_CGROUP = "0::/system.slice/hosted-compute-agent.service"
+# Cgroup is stable for GHA hosted runners (v2 format: "0::" + path)
+EXPECTED_CGROUP = f"0::{RUNNER_CGROUP}"
 
 # Node exe - exact path, must match 'using' in action.yml (currently node24)
 EXPECTED_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
@@ -76,7 +77,7 @@ def collect_caller_info(pid: int) -> dict:
         "exe": read_exe(pid),
         "parent_exe": read_exe(ppid) if ppid else "",
         "cgroup": read_cgroup(pid),
-        "github_action": read_environ(pid).get("GITHUB_ACTION", ""),
+        "github_action": get_trusted_github_env(pid, "GITHUB_ACTION") or "",
         "cmdline": read_cmdline(pid),
     }
     ancestry = get_process_ancestry(pid)
