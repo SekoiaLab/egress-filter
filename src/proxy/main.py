@@ -175,7 +175,7 @@ async def async_main():
     if policy_file and os.path.exists(policy_file):
         with open(policy_file) as f:
             policy_text = f.read()
-        os.remove(policy_file)
+        # Don't delete - needed if proxy restarts
         proxy_logging.logger.info(f"Loaded policy from {policy_file} ({len(policy_text)} bytes)")
     else:
         proxy_logging.logger.info("No policy file, using empty policy")

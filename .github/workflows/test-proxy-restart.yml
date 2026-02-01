@@ -1,0 +1,75 @@
+name: Test proxy restart
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-restart:
+    name: Restart test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          allow-sudo: true
+          audit: true
+          policy: |
+            example.com
+            [:53/udp]
+
+      - name: Test proxy restart
+        run: |
+          set -x
+
+          # Initial state
+          INITIAL_PID=$(cat /tmp/proxy.pid)
+          echo "Initial proxy PID: $INITIAL_PID"
+
+          # Verify it works
+          curl -sf https://example.com -o /dev/null
+          echo "Initial connection OK"
+
+          # Kill proxy
+          sudo kill -9 "$INITIAL_PID"
+
+          # Wait for restart
+          for i in {1..30}; do
+            NEW_PID=$(cat /tmp/proxy.pid 2>/dev/null || echo "$INITIAL_PID")
+            if [ "$NEW_PID" != "$INITIAL_PID" ]; then
+              echo "Proxy restarted with PID $NEW_PID"
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [ "$NEW_PID" = "$INITIAL_PID" ]; then
+            echo "ERROR: Proxy did not restart"
+            exit 1
+          fi
+
+          # Wait for proxy to be ready
+          sleep 2
+
+          # Test connectivity after restart
+          curl -sf https://example.com -o /dev/null && echo "HTTPS OK" || {
+            echo "HTTPS FAILED"
+            exit 1
+          }
+
+          echo "SUCCESS"
+
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== Supervisor log ==="
+          cat /tmp/proxy-stdout.log || true
+          echo ""
+          echo "=== Proxy log (last 50 lines) ==="
+          tail -50 /tmp/proxy.log || true

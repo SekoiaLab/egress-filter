@@ -41,6 +41,7 @@ install_deps() {
 }
 
 PIDFILE="/tmp/proxy.pid"
+SUPERVISOR_PIDFILE="/tmp/supervisor.pid"
 SCOPE_NAME="egress-filter-proxy"
 
 start_proxy() {
@@ -64,26 +65,20 @@ start_proxy() {
     # - Privileged: requires sudo which will be disabled
     sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
 
-    # Start proxy in its own cgroup scope using systemd-run
-    # This allows iptables to exclude proxy traffic by cgroup instead of UID,
-    # enabling us to capture traffic from root processes (like docker --network=host)
-    systemd-run --scope --unit="$SCOPE_NAME" \
-        env PROXY_LOG_FILE=/tmp/proxy.log VERBOSE="${VERBOSE:-0}" PYTHONPATH="$REPO_ROOT/src" \
-            EGRESS_POLICY_FILE="${EGRESS_POLICY_FILE:-}" EGRESS_AUDIT_MODE="${EGRESS_AUDIT_MODE:-0}" \
-            GITHUB_ACTION_REPOSITORY="${GITHUB_ACTION_REPOSITORY:-}" \
-        "$REPO_ROOT"/.venv/bin/python -m proxy.main > /tmp/proxy-stdout.log 2>&1 &
-    local proxy_pid=$!
+    # Start supervisor in a systemd scope
+    # The supervisor runs IN the scope so it keeps the cgroup alive when the
+    # proxy is killed. This prevents iptables cgroup match rules from going stale.
+    systemd-run --scope --unit="$SCOPE_NAME" "$SCRIPT_DIR/supervisor.sh" &
+    local supervisor_pid=$!
+    echo "$supervisor_pid" > "$SUPERVISOR_PIDFILE"
 
-    # Write pidfile for reliable shutdown
-    echo "$proxy_pid" > "$PIDFILE"
-
-    # Wait for proxy to be listening
+    # Wait for proxy to be listening (supervisor writes proxy PID to PIDFILE)
     local counter=0
     while ! ss -tln | grep -q ':8080 '; do
         sleep 0.1
         counter=$((counter+1))
-        if ! kill -0 $proxy_pid 2>/dev/null; then
-            echo "Proxy process died! Output:"
+        if ! kill -0 $supervisor_pid 2>/dev/null; then
+            echo "Supervisor died! Output:"
             cat /tmp/proxy-stdout.log || true
             exit 1
         fi
@@ -138,40 +133,18 @@ stop_proxy() {
     # which breaks runner communication with GitHub (jobs appear stuck).
     "$SCRIPT_DIR"/iptables.sh cleanup 2>/dev/null || true
 
-    # Sudo restore is handled by the Python proxy on shutdown.
-
     # Restore unprivileged user namespace creation (cleanup)
     sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
 
-    # First try graceful shutdown via pidfile (allows cleanup before systemd kills the scope)
-    if [ -f "$PIDFILE" ]; then
-        local pid
-        pid=$(cat "$PIDFILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            echo "Sending SIGTERM to proxy (PID $pid)" | tee -a /tmp/proxy.log
-            kill -TERM "$pid" 2>/dev/null || true
-
-            # Wait for graceful shutdown (Python's SHUTDOWN_TIMEOUT is 3s)
-            local i=0
-            while kill -0 "$pid" 2>/dev/null && [ $i -lt 40 ]; do
-                sleep 0.1
-                i=$((i+1))
-            done
-
-            # Force kill if still running
-            if kill -0 "$pid" 2>/dev/null; then
-                echo "Graceful shutdown failed, sending SIGKILL" | tee -a /tmp/proxy.log
-                kill -KILL "$pid" 2>/dev/null || true
-            fi
-        fi
-        rm -f "$PIDFILE"
+    # Signal supervisor to shut down (it forwards SIGTERM to proxy)
+    if [ -f "$SUPERVISOR_PIDFILE" ]; then
+        kill -TERM "$(cat "$SUPERVISOR_PIDFILE")" 2>/dev/null || true
+        rm -f "$SUPERVISOR_PIDFILE"
     fi
+    rm -f "$PIDFILE"
 
-    # Clean up the systemd scope if it's still running
-    if systemctl is-active --quiet "$SCOPE_NAME.scope" 2>/dev/null; then
-        echo "Stopping systemd scope $SCOPE_NAME.scope" | tee -a /tmp/proxy.log
-        systemctl stop "$SCOPE_NAME.scope" 2>/dev/null || true
-    fi
+    # Scope stop force-kills anything remaining
+    systemctl stop "$SCOPE_NAME.scope" 2>/dev/null || true
 
     echo "Proxy stopped" | tee -a /tmp/proxy.log
 }
