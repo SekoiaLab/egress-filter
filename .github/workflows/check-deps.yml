@@ -41,7 +41,6 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            const fs = require('fs');
             const { execSync } = require('child_process');
 
             const branch = 'auto/update-deps';
@@ -57,9 +56,6 @@ jobs:
 
             // Stage manifest
             execSync('git add src/setup/deps.sha256');
-
-            // Read manifest for PR body
-            const manifest = fs.readFileSync('src/setup/deps.sha256', 'utf8');
 
             // Check if there are changes to commit
             try {
@@ -79,19 +75,11 @@ jobs:
               state: 'open'
             });
 
-            const body = `This PR updates the dependency checksum manifest.
+            const body = `Updates dependency checksums in \`src/setup/deps.sha256\`.
 
-            **Review carefully** - changes could indicate:
-            - New versions of dependencies (check changelogs)
-            - Content changes at pinned URLs (potential security concern)
-
-            <details>
-            <summary>Updated manifest</summary>
-
-            \`\`\`
-            ${manifest}
-            \`\`\`
-            </details>`;
+            **Review the diff** - changes could indicate:
+            - New dependency versions (check changelogs)
+            - Content changes at pinned URLs (security concern)`;
 
             if (prs.length > 0) {
               // Update existing PR
