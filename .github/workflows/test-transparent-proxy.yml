@@ -30,7 +30,7 @@ jobs:
 
             # Test targets (from tests/connection_tests/)
             example.com
-            [:22]
+            github.com:22
             140.82.0.0/16
 
             # DNS
