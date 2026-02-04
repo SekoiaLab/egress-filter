@@ -294,3 +294,35 @@ class MitmproxyAddon:
             proxy_logging.logger.debug(
                 f"DNS cache: {query_name} -> {ips} (ttl={min_ttl})"
             )
+
+    @log_errors
+    def tls_failed_client(self, data: tls.TlsData) -> None:
+        """Handle TLS handshake failure with client.
+
+        This fires when a client rejects our CA cert. Container processes
+        should never reach this point (their traffic is passed through via
+        ignore_connection in tls_clienthello), so any TLS failure here
+        indicates a non-container process rejecting the CA, which is
+        unexpected and worth logging.
+        """
+        src_port = data.context.client.peername[1] if data.context.client.peername else 0
+        dst_ip, dst_port = (
+            data.context.server.address
+            if data.context.server.address
+            else ("unknown", 0)
+        )
+        sni = data.context.client.sni
+
+        pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+        proc_dict = get_proc_info(pid)
+
+        proxy_logging.log_connection(
+            type="https",
+            dst_ip=dst_ip,
+            dst_port=dst_port,
+            host=sni,
+            error="tls_client_rejected_ca",
+            **proc_dict,
+            src_port=src_port,
+            pid=pid,
+        )
