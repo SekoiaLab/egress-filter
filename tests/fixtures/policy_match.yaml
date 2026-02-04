@@ -1520,3 +1520,54 @@ tests:
           dst_port: 443
           host: github.com
         verdict: allow
+
+  - name: DNS-only rule with exe attribute
+    policy: |
+      8.8.8.8:53/udp
+      dns:example.com exe=/usr/bin/curl
+    connections:
+      # Matching exe - allowed
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+          exe: /usr/bin/curl
+        verdict: allow
+      # Non-matching exe - blocked
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+          exe: /usr/bin/wget
+        verdict: block
+      # No exe in event - blocked
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: example.com
+        verdict: block
+
+  - name: DNS-only wildcard rule with cgroup attribute
+    policy: |
+      8.8.8.8:53/udp
+      dns:*.internal.corp cgroup=/system.slice/myservice.service
+    connections:
+      # Matching cgroup - allowed
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: api.internal.corp
+          cgroup: /system.slice/myservice.service
+        verdict: allow
+      # Non-matching cgroup - blocked
+      - event:
+          type: dns
+          dst_ip: 8.8.8.8
+          dst_port: 53
+          name: api.internal.corp
+          cgroup: /user.slice/other.service
+        verdict: block
