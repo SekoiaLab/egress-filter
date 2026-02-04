@@ -103,7 +103,7 @@ After the workflow runs, download the connection log artifact and analyze it aga
 ```bash
 gh run download -n egress-connections <run-id>
 uvx --from 'git+https://github.com/gregclermont/egress-filter' \
-  egress-policy .github/workflows/build.yml --analyze-log connections.jsonl
+  egress-policy --analyze-log connections.jsonl .github/workflows/build.yml
 ```
 
 The CLI shows which connections would be blocked, with process context:
