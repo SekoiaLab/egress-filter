@@ -1,8 +1,8 @@
 name: Test baseline (no egress)
 
 on:
-  push:
-    branches: [test]
+  #push:
+  #  branches: [test]
   workflow_dispatch:
 
 concurrency:
