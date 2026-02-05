@@ -35,6 +35,11 @@ DEFAULT_POLICY = """
 # Various runner processes (Runner.Worker, action node processes) need this.
 results-receiver.actions.githubusercontent.com
 
+# Hosted compute watchdog (provisioning agent telemetry)
+# The provjobd daemon sends traces to a datacenter-specific endpoint.
+[exe=/tmp/provjobd*]
+*.githubapp.com
+
 # Reset context for user rules that follow
 []
 """
