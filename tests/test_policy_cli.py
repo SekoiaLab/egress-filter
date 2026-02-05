@@ -275,6 +275,97 @@ class TestAnalyzeConnections:
         assert len(results["allowed"]) == 1
         assert len(results["blocked"]) == 1
 
+    def test_analyze_dns_response_skipped_for_policy(self):
+        """dns_response entries are not evaluated against policy."""
+        policy = """
+        [:53/udp]
+        8.8.8.8
+        []
+        github.com
+        """
+        connections = [
+            {"type": "dns", "dst_ip": "8.8.8.8", "dst_port": 53, "name": "github.com"},
+            {
+                "type": "dns_response",
+                "dst_ip": "8.8.8.8",
+                "dst_port": 53,
+                "name": "github.com",
+                "answers": ["140.82.113.4"],
+                "ttl": 300,
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        # Only the dns request should be counted, not the dns_response
+        assert len(results["allowed"]) == 1
+        assert results["allowed"][0][0]["type"] == "dns"
+        assert len(results["blocked"]) == 0
+
+    def test_analyze_dns_response_populates_cache_for_tcp(self):
+        """dns_response answers enable hostname matching for TCP connections."""
+        policy = """
+        github.com
+        """
+        connections = [
+            # dns_response provides IP -> hostname mapping
+            {
+                "type": "dns_response",
+                "dst_ip": "8.8.8.8",
+                "dst_port": 53,
+                "name": "github.com",
+                "answers": ["140.82.113.4", "140.82.113.5"],
+                "ttl": 300,
+            },
+            # TCP connection to one of the resolved IPs
+            {
+                "type": "tcp",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+            },
+            # TCP connection to another resolved IP
+            {
+                "type": "tcp",
+                "dst_ip": "140.82.113.5",
+                "dst_port": 443,
+            },
+            # TCP to unrelated IP - should be blocked
+            {
+                "type": "tcp",
+                "dst_ip": "1.2.3.4",
+                "dst_port": 443,
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 2
+        assert len(results["blocked"]) == 1
+
+    def test_analyze_dns_response_without_answers_ignored(self):
+        """dns_response entries without answers don't affect cache."""
+        policy = """
+        github.com
+        """
+        connections = [
+            # dns_response with empty answers (e.g., NXDOMAIN)
+            {
+                "type": "dns_response",
+                "dst_ip": "8.8.8.8",
+                "dst_port": 53,
+                "name": "github.com",
+                "answers": [],
+            },
+            # TCP connection - no DNS cache entry, so no hostname match
+            {
+                "type": "tcp",
+                "dst_ip": "140.82.113.4",
+                "dst_port": 443,
+            },
+        ]
+        results = analyze_connections(policy, connections)
+
+        assert len(results["allowed"]) == 0
+        assert len(results["blocked"]) == 1
+
     def test_analyze_mitmed_https_with_url_rules(self):
         """MITMed HTTPS connections (with url field) match URL rules."""
         policy = """

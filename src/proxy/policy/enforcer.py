@@ -139,7 +139,7 @@ class PolicyEnforcer:
             audit_mode: If True, log but don't block (always allow)
         """
         self.matcher = matcher
-        self.dns_cache = dns_cache or DNSIPCache()
+        self.dns_cache = dns_cache if dns_cache is not None else DNSIPCache()
         self.audit_mode = audit_mode
 
     def _make_decision(
