@@ -43,7 +43,7 @@ jobs:
 The connection to `attacker.com` is blocked because it's not in the allowlist. The connection log shows:
 
 ```json
-{"type":"tcp","dst":"attacker.com:443","pid":4521,"exe":"/usr/bin/node","policy":"deny"}
+{"ts":"2024-01-15T10:30:46.456Z","type":"https","dst_ip":"93.184.216.34","dst_port":443,"host":"attacker.com","policy":"deny","exe":"/usr/bin/node","src_port":54321,"pid":4521}
 ```
 
 ## How It Works
@@ -198,18 +198,19 @@ Fields:
 | `type` | Protocol: `http`, `https`, `tcp`, `udp`, `dns` | Always |
 | `dst_ip` | Destination IP address | Always |
 | `dst_port` | Destination port | Always |
-| `policy` | Policy match result: `allow`, `deny` | Always |
-| `src_port` | Source port | Always |
-| `pid` | Process ID | Always |
+| `policy` | Policy match result: `allow`, `deny` | When policy evaluated |
+| `src_port` | Source port | When available |
+| `pid` | Process ID | When available |
 | `exe` | Executable path | When available |
 | `cmdline` | Command line arguments (list) | When available |
 | `cgroup` | Linux cgroup path | When available |
 | `step` | GitHub step (`{job}.{action_id}`) | When available |
 | `action` | GitHub Action repository | JavaScript actions only |
-| `url` | Full URL | `http`, `https` |
-| `method` | HTTP method | `http`, `https` |
-| `host` | Hostname (SNI) | `https` passthrough |
+| `url` | Full URL | `http`, `https` (MITM) |
+| `method` | HTTP method | `http`, `https` (MITM) |
+| `host` | Hostname (SNI) | `https` (TLS-layer) |
 | `name` | DNS query name | `dns` |
+| `error` | Connection error type | On failure (e.g., `tls_client_rejected_ca`) |
 
 ## Inputs
 
@@ -222,7 +223,7 @@ Fields:
 
 ### Connection Log Upload
 
-By default, the connection log is only uploaded as an artifact when `audit: true` or when a connection was blocked. This reduces artifact noise for successful runs while ensuring logs are available for debugging. Set `upload-log: 'true'` to always upload, or `'false'` to never upload.
+By default, the connection log is only uploaded as an artifact when `audit: true`, when a connection was blocked, or when there are connection errors (e.g., TLS failures). This reduces artifact noise for successful runs while ensuring logs are available for debugging. Set `upload-log: 'true'` to always upload, or `'false'` to never upload.
 
 ### sudo Behavior
 

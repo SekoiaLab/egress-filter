@@ -1,134 +1,104 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Session Start
 
-At the start of each session, check GitHub Issues for pending tasks: `gh issue list`
+Check GitHub Issues for pending tasks: `gh issue list`
 
 ## Workflow
 
-- Do most work in **feature branches** with an associated PR for review
-- Create the PR early (draft if needed) and push updates as you go
-- When TODOs or future improvements come up, suggest creating GitHub Issues rather than inline comments or local notes
-- If the user gets sidetracked while working on a feature branch (e.g., unrelated refactors, new features, documentation cleanup), gently remind them to stay focused or suggest creating an issue for the tangent
+- Work in **feature branches** with an associated PR; create the PR early (draft if needed) and push updates as you go
+- Suggest GitHub Issues for TODOs/tangents rather than inline comments
+- If the user gets sidetracked on a feature branch, gently suggest creating an issue for the tangent
 
 ## Project Overview
 
-eBPF-based connection-to-PID tracker integrated with mitmproxy transparent proxy. Attributes every network connection to the process that made it.
+GitHub Action that acts as an egress firewall for GitHub-hosted Ubuntu runners. Intercepts all outbound network traffic via iptables + mitmproxy, attributes each connection to a PID via eBPF, and enforces an allow-list policy. Supports HTTP/HTTPS (with TLS MITM), raw TCP, DNS, and UDP.
 
 ## File Structure
 
 ```
+action.yml               # GitHub Action definition (node24 runtime)
+disable-sudo/            # Sub-action: disable sudo via control socket
+enable-sudo/             # Sub-action: re-enable sudo via control socket
 src/
-├── action/          # GitHub Action JS code (pre/main/post hooks)
-├── bpf/             # BPF C source
-├── proxy/           # Python proxy package
-│   ├── main.py      # Orchestration, async runners, signal handling
-│   ├── bpf.py       # BPF program loading, PID lookup
-│   ├── control.py   # Unix socket control server for runtime commands
-│   ├── logging.py   # Log configuration, JSONL connection logging
-│   ├── proc.py      # Process info from /proc (exe, cmdline, GitHub step)
-│   ├── utils.py     # Utilities (ip_to_int, get_cgroup, constants)
-│   ├── handlers/    # Protocol handlers
-│   │   ├── mitmproxy.py  # HTTP/TCP/DNS via mitmproxy
-│   │   └── nfqueue.py    # UDP via netfilterqueue
-│   └── policy/      # Policy parsing, matching, enforcement
-│       ├── parser.py     # PEG grammar and policy text parsing
-│       ├── matcher.py    # Rule matching against connections
-│       ├── enforcer.py   # Policy enforcement decisions
-│       ├── dns_cache.py  # DNS IP correlation cache
-│       ├── types.py      # Rule, AttrValue, Protocol types
-│       ├── defaults.py   # Default policy for GHA infrastructure
-│       └── cli.py        # Policy validation CLI
-└── setup/           # Environment setup/teardown scripts
-dist/
-├── pre/main/post/   # Compiled JS bundles
-└── bpf/             # Compiled BPF object
-tests/               # Test scripts
+├── action/              # Action JS hooks
+│   ├── pre.js           # Install deps, write policy, start proxy
+│   ├── main.js          # No-op status message
+│   └── post.js          # Authenticated shutdown, iptables cleanup, upload logs
+├── bpf/
+│   └── conn_tracker.bpf.c  # BPF: kprobes for PID tracking, cgroup hooks for IPv6/raw socket blocking
+├── proxy/               # Python proxy package
+│   ├── main.py          # Async orchestration: BPF setup, policy load, mitmproxy + nfqueue tasks
+│   ├── bpf.py           # BPF loading (tinybpf), PID lookup, dns_cache dict for nfqueue→mitmproxy handoff
+│   ├── control.py       # Unix socket server: authenticated shutdown/sudo commands via SO_PEERCRED
+│   ├── sudo.py          # Disable/enable sudo by truncating /etc/sudoers.d/runner
+│   ├── logging.py       # Operational log + JSONL connection event log
+│   ├── proc.py          # /proc readers: exe, cmdline, cgroup, environ, ancestry, trusted GitHub env
+│   ├── utils.py         # ip_to_int (little-endian for BPF), protocol constants
+│   ├── handlers/
+│   │   ├── mitmproxy.py # Addon: TLS/HTTP/TCP/DNS hooks, policy enforcement, container passthrough
+│   │   └── nfqueue.py   # UDP: DNS detection → mark for redirect, non-DNS → policy check + fast-path
+│   └── policy/
+│       ├── types.py     # Rule, AttrValue, DefaultContext, HeaderContext
+│       ├── parser.py    # PEG grammar (parsimonious), visitor → flat Rule list, placeholder substitution
+│       ├── matcher.py   # ConnectionEvent matching: hostname/wildcard/URL/CIDR/IP, DNS dual-check
+│       ├── enforcer.py  # PolicyEnforcer: check_http/https/tcp/dns/udp, audit mode, DNS IP cache
+│       ├── dns_cache.py # IP→hostname cache (TTL-based, thread-safe, bounded)
+│       ├── defaults.py  # Default rules (local DNS, Azure wireserver, GHA results receiver)
+│       ├── gha.py       # Runner constants (cgroup, exe paths), environment validation
+│       └── cli.py       # CLI: validate policy from workflow YAML, analyze connection logs
+└── setup/
+    ├── proxy.sh         # Lifecycle: install-deps, start (systemd scope + supervisor), stop
+    ├── supervisor.sh    # Wraps proxy with restart-once-on-crash, lives in systemd scope
+    ├── iptables.sh      # All iptables rules: TCP redirect, UDP nfqueue/DNS, Docker bridge, anti-bypass
+    ├── deps.sha256      # Dependency manifest with SHA256 hashes
+    └── generate-deps.py # Script to regenerate deps.sha256
+tests/                   # Policy unit tests (pytest + hypothesis)
 ```
-
-## Key Files
-
-- `src/proxy/main.py` - orchestration, async event loop, shutdown handling
-- `src/proxy/bpf.py` - BPF loading and PID lookup via maps
-- `src/proxy/handlers/` - protocol-specific connection handling
-- `src/bpf/conn_tracker.bpf.c` - BPF program for connection tracking + IPv6 blocking
-- `src/setup/proxy.sh` - proxy lifecycle (install deps, start, stop)
-- `src/setup/iptables.sh` - iptables rules for traffic redirection
-- `.github/workflows/test-transparent-proxy.yml` - CI workflow
 
 ## How It Works
 
-1. BPF kprobes (`tcp_connect`, `udp_sendmsg`) record `(dst_ip, src_port, dst_port, protocol)` → PID in an LRU hash map
-2. BPF cgroup hooks (`connect6`, `sendmsg6`) block all IPv6 to force traffic through the IPv4 proxy
-3. iptables redirects TCP to mitmproxy (:8080), UDP goes through nfqueue for DNS detection
-4. DNS packets are redirected to mitmproxy DNS mode (:8053), other UDP is logged directly
-5. The proxy looks up the PID from BPF maps for each connection and logs it with process info
+1. **BPF kprobes** on `tcp_connect`/`udp_sendmsg` record `(dst_ip, src_port, dst_port, proto) → PID` in an LRU hash map (65536 entries)
+2. **BPF cgroup hooks** block IPv6 (`connect6`/`sendmsg6`) and raw/packet sockets (`sock_create`) to prevent proxy bypass
+3. **iptables** redirects TCP → mitmproxy :8080, sends UDP through nfqueue for DNS detection
+4. **nfqueue** (mangle, pre-NAT): DNS packets get mark 2 → NAT redirects to mitmproxy :8053; non-DNS UDP gets policy-checked, allowed packets get mark 4 → conntrack fast-path
+5. **mitmproxy** handles HTTP/HTTPS/TCP/DNS: looks up PID from BPF map, enforces policy, logs to JSONL. Container processes get TLS passthrough (no MITM). DNS responses populate an IP→hostname cache for later TCP correlation.
+6. **Control socket** (`/tmp/egress-filter-control.sock`) authenticates callers via `SO_PEERCRED` + process ancestry + `GITHUB_ACTION_REPOSITORY` match. Used by post.js for shutdown.
+7. **Startup hardening**: sudo disabled (sudoers truncated), user namespaces blocked (`unprivileged_userns_clone=0`), proxy runs in systemd scope for cgroup isolation
 
-## Running the Workflow
-
-The workflow uses `@test` to reference the action code and triggers on push to the `test` branch. To test a branch:
+## Running Tests
 
 ```bash
+# Policy unit tests (the main local test suite)
+uv run --with pytest --with hypothesis python -m pytest tests/
+
+# Integration tests run as GitHub Actions workflows (.github/workflows/test-*.yml)
+# Trigger by pushing to the test branch:
 git push -f origin HEAD:test
 ```
-
-This pushes your current branch to `test`, which auto-triggers the workflow using your branch's code.
 
 ## Local Development
 
 ```bash
-# Install dependencies
 uv sync
-
-# Compile BPF (requires Docker) - output goes to dist/bpf/
-uv run tinybpf docker-compile src/bpf/conn_tracker.bpf.c -o dist/bpf/conn_tracker.bpf.o
-
-# Run proxy (requires root for BPF)
-sudo PYTHONPATH=src .venv/bin/python -m proxy.main
+uv run tinybpf docker-compile src/bpf/conn_tracker.bpf.c -o dist/bpf/conn_tracker.bpf.o  # requires Docker
+sudo PYTHONPATH=src .venv/bin/python -m proxy.main  # requires root for BPF
 ```
 
-## BPF Map Structure
+## Policy DSL
 
-```python
-class ConnKeyV4(ctypes.Structure):
-    _pack_ = 1
-    _fields_ = [
-        ("dst_ip", ctypes.c_uint32),
-        ("src_port", ctypes.c_uint16),
-        ("dst_port", ctypes.c_uint16),
-        ("protocol", ctypes.c_uint8),
-        ("pad", ctypes.c_uint8 * 3),
-    ]
-```
+Rules are parsed line-by-line with a PEG grammar. Headers (`[...]`) set context (port, protocol, methods, URL base, attributes) for subsequent rules. `[]` resets context. Secure defaults: port 443, TCP, methods GET|HEAD.
+
+Rule types: hostname (`github.com`), wildcard (`*.github.com`), IP (`1.2.3.4`), CIDR (`10.0.0.0/8`), URL (`https://github.com/owner/repo/*`), path (`/api/*` under a URL-base header), DNS-only (`dns:example.com`).
+
+Attributes: `exe=`, `cgroup=`, `step=`, `action=`, `arg=`, `arg[N]=`. Port: `:443`, `:80|443`, `:*`. Protocol: `/tcp`, `/udp`. Methods: `GET|POST`.
+
+The `for_runner` factory prepends infrastructure defaults and injects `cgroup=/system.slice/hosted-compute-agent.service` on all rules.
 
 ## Supported Runners
 
-This action only supports **GitHub-hosted Ubuntu runners**. Self-hosted runners are not supported.
-
-Current support:
-- `ubuntu-latest` (currently Ubuntu 24.04, x64)
-
-Planned expansion:
-1. ARM64 runners (ubuntu-24.04-arm)
-2. Previous Ubuntu releases (ubuntu-22.04)
-
-### GitHub Actions Environment Variables
-
-- `ImageOS`: Runner image identifier (e.g., `ubuntu24`, `ubuntu22`). Used for platform detection and cache keys.
-- `process.arch`: Node.js architecture (`x64`, `arm64`). Used in cache keys.
-
-Cache key format: `egress-filter-venv-${ImageOS}-${arch}-${lockHash}`
-
-The `.deb` packages in `src/setup/proxy.sh` are hardcoded to Ubuntu 24.04 amd64. When adding ARM64 or other Ubuntu versions, these URLs need architecture/version-specific variants.
+GitHub-hosted Ubuntu 24.04 x64 only. Platform enforced in `pre.js` (checks `ImageOS=ubuntu24`, `RUNNER_ENVIRONMENT=github-hosted`). The `.deb` packages in `src/setup/deps.sha256` are hardcoded to Ubuntu 24.04 amd64.
 
 ## Dependencies
 
-- tinybpf (from custom index) - BPF loading and map access
-- mitmproxy - transparent proxy (HTTP/HTTPS/TCP/DNS)
-- netfilterqueue - UDP packet interception via nfqueue
-- scapy - packet parsing for DNS detection
-- parsimonious - PEG parser for policy syntax
-
-See `pyproject.toml` for full dependency list.
+Runtime (proxy): tinybpf (custom index), mitmproxy, netfilterqueue, scapy, parsimonious, pyyaml. See `pyproject.toml`.
