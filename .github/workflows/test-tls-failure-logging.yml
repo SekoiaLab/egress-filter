@@ -1,8 +1,8 @@
 name: Test TLS failure logging
 
 on:
-  #push:
-  #  branches: [test]
+  push:
+    branches: [test]
   workflow_dispatch:
 
 concurrency:

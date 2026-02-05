@@ -1,8 +1,8 @@
 name: Test proxy restart
 
 on:
-  #push:
-  #  branches: [test]
+  push:
+    branches: [test]
   workflow_dispatch:
 
 concurrency:

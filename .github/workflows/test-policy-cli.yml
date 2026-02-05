@@ -1,8 +1,8 @@
 name: Test policy CLI
 
 on:
-  #push:
-  #  branches: [test]
+  push:
+    branches: [test]
   workflow_dispatch:
 
 concurrency:

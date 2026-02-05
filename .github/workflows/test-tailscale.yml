@@ -2,8 +2,8 @@ name: Test Tailscale Compatibility
 
 on:
   workflow_dispatch:
-  #push:
-  #  branches: [test]
+  push:
+    branches: [test]
 
 jobs:
   test-tailscale:
