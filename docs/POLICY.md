@@ -14,17 +14,23 @@ hostname_or_ip [port_spec] [scope...]
 
 ```yaml
 policy: |
-  # Allow all traffic to example.com
+  # Allow all traffic to example.com (port 443/tcp by default)
   example.com
 
   # Allow specific port
-  api.example.com[:443]
+  api.example.com:443
 
   # Allow IP range
   10.0.0.0/8
 
   # Allow UDP DNS
-  8.8.8.8[:53/udp]
+  8.8.8.8:53/udp
+
+  # Multiple ports
+  192.168.1.1:80|443
+
+  # Any port
+  10.0.0.0/8:*
 ```
 
 ### Wildcards
@@ -32,15 +38,82 @@ policy: |
 Wildcards are supported for hostnames:
 
 ```yaml
-# Suffix wildcards (match any subdomain)
-*.example.com      # Matches sub.example.com, a.b.example.com
+# Subdomain wildcards (match any depth of subdomains)
+*.example.com         # Matches sub.example.com, a.b.example.com
 
-# Prefix wildcards (match hostname prefix)
+# Label wildcards (fnmatch pattern on a single label)
 derp*.tailscale.com   # Matches derp1.tailscale.com, derp99.tailscale.com
 us-west-*.aws.com     # Matches us-west-1.aws.com, us-west-2.aws.com
+d*rp.example.com      # Matches darp.example.com, d123rp.example.com
+
+# Combined: subdomain wildcard + label wildcard
+*.derp*.example.com   # Matches foo.derp1.example.com, a.b.derp99.example.com
 ```
 
-Note: Only one wildcard per hostname is allowed, and it must be at the start or end of a label.
+Note: `*.example.com` requires at least one subdomain — it does not match `example.com` itself.
+
+### URL Rules
+
+Full URL rules allow matching on scheme, host, and path:
+
+```yaml
+# Path with wildcard segments (* matches one segment, trailing * matches any depth)
+https://api.github.com/repos/*/releases
+https://api.github.com/repos/myorg/*
+
+# Method restriction (default: GET|HEAD for URL rules)
+POST https://api.github.com/repos/*/issues
+GET|POST https://example.com/api/*
+```
+
+### Headers
+
+Headers (`[...]`) set context for subsequent rules. This avoids repeating the same base URL, port, or constraints:
+
+```yaml
+# URL base header — subsequent path rules are relative to it
+[https://api.github.com]
+/repos/*/releases
+/repos/*/tags
+POST /repos/*/issues
+
+# Port/protocol header
+[:53/udp]
+8.8.8.8
+8.8.4.4
+
+# Method header
+[GET|POST]
+https://api.example.com/data
+https://api.example.com/query
+
+# Attribute header — applies constraints to all subsequent rules
+[action=actions/checkout]
+github.com
+*.githubusercontent.com
+
+# Reset to defaults (port 443/tcp, methods GET|HEAD, no attributes)
+[]
+```
+
+### DNS-Only Rules
+
+DNS-only rules allow resolving a domain without allowing egress connections to it. This is useful when a process needs to look up a domain but connect to its IPs via a separate IP/CIDR rule:
+
+```yaml
+dns:example.com
+dns:*.internal.corp
+```
+
+### Placeholders
+
+Policy text supports `{owner}` and `{repo}` placeholders, substituted from the `GITHUB_REPOSITORY` environment variable at runtime:
+
+```yaml
+https://github.com/{owner}/{repo}/*
+```
+
+When using the CLI for offline analysis, pass `--repo OWNER/REPO` to substitute these.
 
 ## Scope Constraints
 
@@ -87,13 +160,35 @@ This is useful for:
 - System services
 - Specific binaries regardless of how they were invoked
 
-### `cgroup=` - Control Group
+### `arg=` / `arg[N]=` - Command Line Arguments
 
-Restricts access by Linux cgroup path:
+Match against command line arguments:
 
 ```yaml
-# Azure agent infrastructure
+# Match any argument in the command line
+example.com arg=--config=/etc/app.conf
+
+# Match a specific argument by index (0-based)
+example.com arg[0]=node
+example.com arg[1]=server.js
+```
+
+### `cgroup=` - Control Group
+
+Restricts access by Linux cgroup path. Supports wildcards and shortcuts:
+
+```yaml
+# Exact cgroup path
 168.63.129.16 cgroup=/azure.slice/walinuxagent.service
+
+# Wildcard match
+10.0.0.0/8:* cgroup=/system.slice/*
+
+# Shortcut: match Docker container processes
+registry.example.com cgroup=@docker
+
+# Shortcut: match host processes (not in containers)
+api.example.com cgroup=@host
 ```
 
 ## Best Practices
@@ -239,9 +334,4 @@ egress-policy --dump-rules workflow.yml
 
 ### Enable Debug Logging
 
-Set `VERBOSE=1` in your workflow to see detailed proxy logs:
-
-```yaml
-env:
-  VERBOSE: 1
-```
+The proxy reads `VERBOSE` from its environment, but it's not passed through the `sudo env` wrapper by default. To enable verbose logging, the env var must be added to the `sudoEnv` array in `src/action/pre.js`. This is mainly useful for development — proxy logs are written to `/tmp/proxy.log` and mitmproxy logs to `/tmp/mitmproxy.log`.
