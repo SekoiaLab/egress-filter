@@ -23,6 +23,9 @@ class MitmproxyAddon:
         """
         self.bpf = bpf
         self.enforcer = enforcer
+        # Stash allowed DNS request context for dns_response to log with answers.
+        # Keyed by flow.id (a UUID string assigned at flow creation).
+        self._pending_dns: dict[str, dict] = {}
 
     @log_errors
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
@@ -256,6 +259,17 @@ class MitmproxyAddon:
                     src_port=src_port,
                     pid=pid,
                 )
+
+                # Stash context for dns_response to log with resolved IPs
+                self._pending_dns[flow.id] = dict(
+                    dst_ip=dst_ip,
+                    dst_port=dst_port,
+                    name=query_name,
+                    policy=decision.policy,
+                    **proc_dict,
+                    src_port=src_port,
+                    pid=pid,
+                )
         else:
             # Cache miss - nfqueue should have seen the packet first
             proxy_logging.logger.error(
@@ -264,7 +278,7 @@ class MitmproxyAddon:
 
     @log_errors
     def dns_response(self, flow: dns.DNSFlow) -> None:
-        """Handle DNS response - record IPs for correlation."""
+        """Handle DNS response - record IPs for correlation and log resolved addresses."""
         if not flow.response:
             return
 
@@ -278,21 +292,30 @@ class MitmproxyAddon:
 
         for answer in flow.response.answers:
             # Check for A record (type 1) or AAAA record (type 28)
-            if hasattr(answer, "data"):
-                if answer.type == 1:  # A record
-                    ips.append(str(answer.data))
-                    if hasattr(answer, "ttl"):
-                        min_ttl = min(min_ttl, answer.ttl)
-                # Note: AAAA records are blocked at kernel level, but handle anyway
-                elif answer.type == 28:  # AAAA record
-                    ips.append(str(answer.data))
-                    if hasattr(answer, "ttl"):
-                        min_ttl = min(min_ttl, answer.ttl)
+            if answer.type == 1:  # A record
+                ips.append(str(answer.ipv4_address))
+                if hasattr(answer, "ttl"):
+                    min_ttl = min(min_ttl, answer.ttl)
+            # Note: AAAA records are blocked at kernel level, but handle anyway
+            elif answer.type == 28:  # AAAA record
+                ips.append(str(answer.ipv6_address))
+                if hasattr(answer, "ttl"):
+                    min_ttl = min(min_ttl, answer.ttl)
 
         if ips:
             self.enforcer.record_dns_response(query_name, ips, min_ttl)
             proxy_logging.logger.debug(
                 f"DNS cache: {query_name} -> {ips} (ttl={min_ttl})"
+            )
+
+        # Log dns_response event with full context from the request + resolved IPs
+        conn_dict = self._pending_dns.pop(flow.id, None)
+        if conn_dict:
+            proxy_logging.log_connection(
+                type="dns_response",
+                answers=ips,
+                ttl=min_ttl,
+                **conn_dict,
             )
 
     @log_errors

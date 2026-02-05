@@ -272,6 +272,8 @@ jobs:
                       140.82.0.0/16
 
                       # Test connections
+                      []
+                      example.com
                       [:80]
                       example.com
                       [:*/udp]

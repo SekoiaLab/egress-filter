@@ -146,15 +146,23 @@ def analyze_connections(
     dns_cache = DNSIPCache()
     enforcer = PolicyEnforcer(matcher, dns_cache)
 
-    # Pre-populate DNS cache from HTTPS/HTTP connections that have hostname info.
+    # Pre-populate DNS cache from connection data.
     # This enables TCP connections to the same IPs to match hostname rules,
     # similar to how the live proxy correlates DNS responses with later connections.
     for conn in connections:
+        # Use dns_response events (resolved IPs from actual DNS answers)
+        if conn.get("type") == "dns_response":
+            answers = conn.get("answers", [])
+            name = conn.get("name")
+            if name and answers:
+                for ip in answers:
+                    dns_cache.add(ip, name, ttl=3600)
+            continue
+        # Also use HTTPS/HTTP connections that have hostname info
         dst_ip = conn.get("dst_ip")
         host = conn.get("host")  # SNI for HTTPS
         if dst_ip and host:
             dns_cache.add(dst_ip, host, ttl=3600)
-        # Also extract hostname from HTTP URLs
         url = conn.get("url")
         if dst_ip and url:
             parsed = urlparse(url)
@@ -166,6 +174,9 @@ def analyze_connections(
     error_counts: dict[tuple, dict] = {}  # key -> {conn, count}
 
     for conn in connections:
+        # dns_response entries are metadata (resolved IPs), not connections to evaluate
+        if conn.get("type") == "dns_response":
+            continue
         key = connection_key(conn)
         if conn.get("error"):
             # Error events go to separate bucket
