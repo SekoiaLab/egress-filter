@@ -588,8 +588,9 @@ class PolicyMatcher:
             defaults: Optional DefaultContext to override security defaults.
         """
         all_rules = parse_policy(policy_text, defaults=defaults)
-        self.rules = [r for r in all_rules if not r.passthrough]
+        self.rules = list(all_rules)  # ALL rules, including passthrough and insecure
         self.passthrough_rules = [r for r in all_rules if r.passthrough]
+        self.insecure_rules = [r for r in all_rules if r.insecure]
 
     def match(self, event: ConnectionEvent | dict) -> tuple[bool, int | None]:
         """Check if an event is allowed by the policy.
@@ -681,6 +682,19 @@ class PolicyMatcher:
             event = ConnectionEvent.from_dict(event)
 
         for i, rule in enumerate(self.passthrough_rules):
+            if match_rule(rule, event):
+                return (True, i)
+        return (False, None)
+
+    def match_insecure(self, event: ConnectionEvent | dict) -> tuple[bool, int | None]:
+        """Check if event matches an insecure rule (separate from allow/deny).
+
+        Returns (is_insecure, matching_rule_index).
+        """
+        if isinstance(event, dict):
+            event = ConnectionEvent.from_dict(event)
+
+        for i, rule in enumerate(self.insecure_rules):
             if match_rule(rule, event):
                 return (True, i)
         return (False, None)

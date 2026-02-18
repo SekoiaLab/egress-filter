@@ -125,7 +125,63 @@ class MitmproxyAddon:
                     pid=pid,
                 )
                 data.ignore_connection = True
+            elif decision.insecure:
+                data.context._egress_insecure = True
         # else: No SNI - defer to request() hook
+
+    @log_errors
+    def tls_start_server(self, tls_start: tls.TlsData) -> None:
+        """Disable upstream cert verification for insecure rules."""
+        is_insecure = getattr(tls_start.context, '_egress_insecure', False)
+
+        # Fallback: for no-SNI connections (e.g., direct IP), check insecure rules
+        # using server address. tls_clienthello defers no-SNI to request(), but
+        # TLS handshake happens before request(), so we must check here.
+        if not is_insecure and tls_start.context.server.address:
+            dst_ip, dst_port = tls_start.context.server.address
+            src_port = tls_start.context.client.peername[1] if tls_start.context.client.peername else 0
+            pid = self.bpf.lookup_pid(dst_ip, src_port, dst_port)
+            proc = ProcessInfo.from_dict(get_proc_info(pid))
+            proc_dict = proc.to_dict() if proc else {}
+            from ..policy.matcher import ConnectionEvent
+            event = ConnectionEvent(
+                type="https", dst_ip=dst_ip, dst_port=dst_port, **proc_dict,
+            )
+            is_insecure, _ = self.enforcer.matcher.match_insecure(event)
+
+        if not is_insecure:
+            return
+
+        from mitmproxy.net import tls as net_tls
+        from mitmproxy import ctx as mitmproxy_ctx
+        from OpenSSL import SSL
+
+        server = tls_start.context.server
+
+        ssl_ctx = net_tls.create_proxy_server_context(
+            method=net_tls.Method.DTLS_CLIENT_METHOD if tls_start.is_dtls
+                   else net_tls.Method.TLS_CLIENT_METHOD,
+            min_version=net_tls.Version[mitmproxy_ctx.options.tls_version_server_min],
+            max_version=net_tls.Version[mitmproxy_ctx.options.tls_version_server_max],
+            cipher_list=None,
+            ecdh_curve=None,
+            verify=net_tls.Verify.VERIFY_NONE,
+            ca_path=mitmproxy_ctx.options.ssl_verify_upstream_trusted_confdir,
+            ca_pemfile=mitmproxy_ctx.options.ssl_verify_upstream_trusted_ca,
+            client_cert=None,
+            legacy_server_connect=mitmproxy_ctx.options.ssl_insecure,
+        )
+
+        tls_start.ssl_conn = SSL.Connection(ssl_ctx)
+        if server.sni:
+            try:
+                import ipaddress
+                ipaddress.ip_address(server.sni)
+            except ValueError:
+                tls_start.ssl_conn.set_tlsext_host_name(server.sni.encode("idna"))
+        if server.alpn_offers:
+            tls_start.ssl_conn.set_alpn_protos(list(server.alpn_offers))
+        tls_start.ssl_conn.set_connect_state()
 
     @log_errors
     def request(self, flow: http.HTTPFlow) -> None:

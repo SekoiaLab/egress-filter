@@ -956,7 +956,7 @@ tests:
         verdict: allow
         passthrough: false
 
-  - name: Passthrough-only rule without allow rule means blocked
+  - name: Passthrough-only rule also acts as allow rule
     policy: |
       example.com passthrough
     checks:
@@ -965,7 +965,8 @@ tests:
         dst_ip: 93.184.216.34
         dst_port: 443
         can_mitm: true
-        verdict: block
+        verdict: allow
+        passthrough: true
 
   - name: Passthrough with scoped cgroup attr matches
     policy: |
@@ -1006,3 +1007,123 @@ tests:
         can_mitm: true
         verdict: allow
         passthrough: true
+
+  - name: Passthrough-only wildcard rule also acts as allow
+    policy: |
+      *.docker.io passthrough
+    checks:
+      - type: https
+        sni: registry-1.docker.io
+        dst_ip: 52.72.232.1
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        passthrough: true
+
+  # =============================================================================
+  # Insecure (skip upstream TLS cert verification)
+  # =============================================================================
+
+  - name: Insecure hostname sets decision.insecure when can_mitm
+    policy: |
+      internal-registry.corp.example.com insecure
+    checks:
+      - type: https
+        sni: internal-registry.corp.example.com
+        dst_ip: 10.0.0.50
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: true
+
+  - name: Insecure hostname without can_mitm does not set insecure
+    policy: |
+      internal-registry.corp.example.com insecure
+    checks:
+      - type: https
+        sni: internal-registry.corp.example.com
+        dst_ip: 10.0.0.50
+        dst_port: 443
+        verdict: allow
+        insecure: false
+
+  - name: Insecure IP sets decision.insecure
+    policy: |
+      192.168.1.100 insecure
+    checks:
+      - type: https
+        sni: null
+        dst_ip: 192.168.1.100
+        dst_port: 443
+        verdict: allow
+        insecure: true
+
+  - name: Insecure-only rule allows (no separate allow rule needed)
+    policy: |
+      internal-registry.corp.example.com insecure
+    checks:
+      - type: https
+        sni: internal-registry.corp.example.com
+        dst_ip: 10.0.0.50
+        dst_port: 443
+        verdict: allow
+
+      - type: https
+        sni: other.example.com
+        dst_ip: 10.0.0.51
+        dst_port: 443
+        verdict: block
+
+  - name: Insecure with scoped cgroup attr
+    policy: |
+      internal-registry.corp.example.com insecure cgroup=@docker
+    checks:
+      # Docker process - insecure applies
+      - type: https
+        sni: internal-registry.corp.example.com
+        dst_ip: 10.0.0.50
+        dst_port: 443
+        can_mitm: true
+        proc:
+          cgroup: /docker/abc123
+        verdict: allow
+        insecure: true
+
+      # Host process - insecure does not apply (cgroup doesn't match), blocked
+      - type: https
+        sni: internal-registry.corp.example.com
+        dst_ip: 10.0.0.50
+        dst_port: 443
+        can_mitm: true
+        proc:
+          cgroup: /user.slice/user-1000.slice
+        verdict: block
+
+  - name: Insecure CIDR sets decision.insecure
+    policy: |
+      10.0.0.0/8 insecure
+    checks:
+      - type: https
+        sni: null
+        dst_ip: 10.1.2.3
+        dst_port: 443
+        verdict: allow
+        insecure: true
+
+      - type: https
+        sni: null
+        dst_ip: 192.168.1.1
+        dst_port: 443
+        verdict: block
+
+  - name: Allowed but no insecure rule means insecure is false
+    policy: |
+      github.com
+    checks:
+      - type: https
+        sni: github.com
+        dst_ip: 140.82.121.4
+        dst_port: 443
+        can_mitm: true
+        verdict: allow
+        insecure: false

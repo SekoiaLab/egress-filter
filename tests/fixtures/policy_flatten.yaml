@@ -1293,3 +1293,165 @@ tests:
         url_base: null
         attrs: {}
         passthrough: true
+
+  # =============================================================================
+  # Insecure rules (skip upstream TLS cert verification)
+  # =============================================================================
+
+  - name: Inline insecure on hostname
+    policy: |
+      internal-registry.corp.example.com insecure
+    rules:
+      - type: host
+        target: internal-registry.corp.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Inline insecure on wildcard hostname
+    policy: |
+      *.dev.internal.io insecure
+    rules:
+      - type: wildcard_host
+        target: "*.dev.internal.io"
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Inline insecure on IP
+    policy: |
+      192.168.1.100 insecure
+    rules:
+      - type: ip
+        target: 192.168.1.100
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Inline insecure on CIDR
+    policy: |
+      10.0.0.0/8 insecure
+    rules:
+      - type: cidr
+        target: 10.0.0.0/8
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure header context
+    policy: |
+      [insecure]
+      internal-registry.corp.example.com
+      192.168.1.100
+    rules:
+      - type: host
+        target: internal-registry.corp.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+      - type: ip
+        target: 192.168.1.100
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure header with attrs
+    policy: |
+      [insecure cgroup=@docker]
+      internal-registry.corp.example.com
+    rules:
+      - type: host
+        target: internal-registry.corp.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs:
+          cgroup: "@docker"
+        insecure: true
+
+  - name: Header reset clears insecure
+    policy: |
+      [insecure]
+      internal-registry.corp.example.com
+      []
+      github.com
+    rules:
+      - type: host
+        target: internal-registry.corp.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+
+  - name: Insecure rejected on URL rule (skipped)
+    policy: |
+      [insecure]
+      https://example.com/*
+    rules: []
+
+  - name: Insecure plus passthrough rejected (skipped)
+    policy: |
+      github.com passthrough insecure
+    rules: []
+
+  - name: Mixed insecure and normal rules
+    policy: |
+      github.com
+      internal-registry.corp.example.com insecure
+    rules:
+      - type: host
+        target: github.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+      - type: host
+        target: internal-registry.corp.example.com
+        port: [443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true
+
+  - name: Insecure with port
+    policy: |
+      internal-registry.corp.example.com:8443 insecure
+    rules:
+      - type: host
+        target: internal-registry.corp.example.com
+        port: [8443]
+        protocol: tcp
+        methods: null
+        url_base: null
+        attrs: {}
+        insecure: true

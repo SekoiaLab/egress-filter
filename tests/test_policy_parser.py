@@ -94,6 +94,10 @@ def test_policy_flatten(test_case):
             assert actual.get("passthrough", False) == expected["passthrough"], (
                 f"Rule {i}: passthrough mismatch: got {actual.get('passthrough', False)}, expected {expected['passthrough']}"
             )
+        if "insecure" in expected:
+            assert actual.get("insecure", False) == expected["insecure"], (
+                f"Rule {i}: insecure mismatch: got {actual.get('insecure', False)}, expected {expected['insecure']}"
+            )
 
 
 # =============================================================================
@@ -437,6 +441,20 @@ class TestValidatePolicy:
         errors = validate_policy(policy)
         assert len(errors) == 1
         assert "passthrough" in errors[0][2].lower()
+
+    def test_insecure_on_url_rule_warns(self):
+        """insecure on a URL rule type generates a warning."""
+        policy = "[insecure]\nhttps://example.com/api/*"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        assert "insecure" in errors[0][2].lower()
+
+    def test_insecure_plus_passthrough_warns(self):
+        """insecure + passthrough on same rule generates a warning."""
+        policy = "github.com passthrough insecure"
+        errors = validate_policy(policy)
+        assert len(errors) == 1
+        assert "mutually exclusive" in errors[0][2].lower()
 
     def test_passthrough_overlap_with_url_rule(self):
         """Passthrough on a hostname that also has URL rules warns."""
