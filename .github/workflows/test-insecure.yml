@@ -1,0 +1,100 @@
+name: Test insecure flag
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup egress filter
+        uses: gregclermont/egress-filter@test
+        with:
+          policy: |
+            # Insecure: skip upstream TLS cert verification (MITM still active)
+            self-signed.badssl.com insecure
+            untrusted-root.badssl.com insecure
+
+            # Control: allowed but NOT insecure — upstream cert check applies
+            expired.badssl.com
+
+            # DNS
+            [:53/udp]
+            168.63.129.16
+
+      - name: "Test 1: self-signed.badssl.com with insecure (should succeed)"
+        run: |
+          # The insecure flag makes the proxy skip upstream cert verification,
+          # so a self-signed cert on the upstream is accepted.
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://self-signed.badssl.com/)
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "PASS: self-signed.badssl.com succeeded with insecure flag"
+          else
+            echo "FAIL: Expected success for insecure self-signed, got HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Test 2: untrusted-root.badssl.com with insecure (should succeed)"
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://untrusted-root.badssl.com/)
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "PASS: untrusted-root.badssl.com succeeded with insecure flag"
+          else
+            echo "FAIL: Expected success for insecure untrusted-root, got HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Test 3: expired.badssl.com without insecure (should fail)"
+        run: |
+          # Without the insecure flag, the proxy verifies the upstream cert.
+          # expired.badssl.com has an expired cert, so the proxy should reject it.
+          # curl will get a 502 from mitmproxy or a connection error.
+          if curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://expired.badssl.com/ 2>/dev/null; then
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://expired.badssl.com/ 2>/dev/null)
+            echo "HTTP status: $HTTP_CODE"
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+              echo "FAIL: Expected failure for expired cert without insecure flag"
+              exit 1
+            else
+              echo "PASS: expired.badssl.com correctly failed (HTTP $HTTP_CODE)"
+            fi
+          else
+            echo "PASS: expired.badssl.com correctly failed (connection error)"
+          fi
+
+      - name: Verify connection log
+        run: |
+          echo "=== Connection log ==="
+          cat ${{ runner.temp }}/connections.jsonl || echo "No connection log"
+          echo ""
+
+          echo "=== Checking self-signed.badssl.com was allowed ==="
+          if grep -q '"host":"self-signed.badssl.com"' ${{ runner.temp }}/connections.jsonl ||
+             grep -q '"url":"https://self-signed.badssl.com/' ${{ runner.temp }}/connections.jsonl; then
+            echo "PASS: self-signed.badssl.com found in log"
+          else
+            echo "FAIL: self-signed.badssl.com not found in log"
+            exit 1
+          fi
+
+          echo "=== Checking untrusted-root.badssl.com was allowed ==="
+          if grep -q '"host":"untrusted-root.badssl.com"' ${{ runner.temp }}/connections.jsonl ||
+             grep -q '"url":"https://untrusted-root.badssl.com/' ${{ runner.temp }}/connections.jsonl; then
+            echo "PASS: untrusted-root.badssl.com found in log"
+          else
+            echo "FAIL: untrusted-root.badssl.com not found in log"
+            exit 1
+          fi
+
+      - name: Show proxy logs
+        if: always()
+        run: cat ${{ runner.temp }}/proxy.log || echo "No proxy log found"
