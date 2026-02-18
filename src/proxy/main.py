@@ -25,6 +25,7 @@ from .sudo import configure_sudo_logging, disable_sudo, enable_sudo, parse_sudo_
 from .handlers import MitmproxyAddon, NfqueueHandler
 from .policy import PolicyEnforcer, validate_policy
 from .policy.gha import validate_runner_environment
+from .policy.parser import parse_github_repository, substitute_placeholders
 from .socket_dev import SocketDevClient
 from . import logging as proxy_logging
 
@@ -197,20 +198,26 @@ async def async_main():
     else:
         proxy_logging.logger.info("No policy file, using empty policy")
 
+    # Substitute {owner}/{repo} placeholders before validation so that
+    # lines like "https://github.com/{owner}/{repo}/info/refs" are valid.
+    owner, repo = parse_github_repository(github_repository or None)
+    policy_text = substitute_placeholders(policy_text, owner=owner, repo=repo)
+
     # Validate policy syntax
     policy_errors = validate_policy(policy_text)
     if policy_errors:
         for line_num, line, error in policy_errors:
             proxy_logging.logger.error(f"Invalid policy line {line_num}: {line}")
-        # Emit GitHub Actions annotation
-        print(f"::warning::Policy has {len(policy_errors)} invalid line(s) that will be skipped")
+            print(f"  line {line_num}: {line}")
         if not audit_mode:
-            # In enforcement mode, fail on invalid policy to prevent surprises
-            proxy_logging.logger.error(
-                "Refusing to start with invalid policy in enforcement mode. "
-                "Fix the policy or use audit-mode: true to continue with warnings."
+            print(
+                f"::error::Policy has {len(policy_errors)} invalid line(s). "
+                f"The proxy will not start in enforcement mode with an invalid policy. "
+                f"Fix the invalid line(s) above or use audit-mode: true to skip them."
             )
             sys.exit(1)
+        # Emit GitHub Actions annotation
+        print(f"::warning::Policy has {len(policy_errors)} invalid line(s) that will be skipped")
 
     enforcer = PolicyEnforcer.for_runner(
         policy_text,
