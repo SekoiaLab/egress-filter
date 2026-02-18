@@ -21,7 +21,7 @@ jobs:
 
       # Now set up the proxy (use branch reference to get pre/post hooks)
       - name: Setup egress filter
-        uses: gregclermont/egress-filter@research/raw-socket-bypass
+        uses: SekoiaLab/egress-filter@research/raw-socket-bypass
         env:
           VERBOSE: "1"
 

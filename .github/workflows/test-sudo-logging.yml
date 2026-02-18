@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Setup egress filter
-        uses: gregclermont/egress-filter@test
+        uses: SekoiaLab/egress-filter@test
         with:
           allow-sudo: true
           audit: true

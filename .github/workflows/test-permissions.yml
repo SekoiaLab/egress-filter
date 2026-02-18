@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Setup egress filter (audit mode)
-        uses: gregclermont/egress-filter@test
+        uses: SekoiaLab/egress-filter@test
         with:
           audit: true
 

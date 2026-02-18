@@ -103,7 +103,7 @@ jobs:
       # Set up the proxy (now includes unprivileged_userns_clone=0)
       # Use branch reference to get pre/post hooks (uses: ./ doesn't run them)
       - name: Setup egress filter
-        uses: gregclermont/egress-filter@research/netns-bypass
+        uses: SekoiaLab/egress-filter@research/netns-bypass
         env:
           VERBOSE: "1"
 

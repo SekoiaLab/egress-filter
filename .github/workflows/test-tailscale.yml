@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Start egress filter
-        uses: gregclermont/egress-filter@test
+        uses: SekoiaLab/egress-filter@test
         with:
           allow-sudo: true  # Tailscale action needs sudo to install
           policy: |
@@ -32,7 +32,7 @@ jobs:
           tags: tag:github-actions
 
       - name: Disable sudo after setup
-        uses: gregclermont/egress-filter/disable-sudo@test
+        uses: SekoiaLab/egress-filter/disable-sudo@test
 
       - name: Verify sudo is disabled
         run: |
@@ -43,7 +43,7 @@ jobs:
           echo "✓ Sudo is disabled as expected"
 
       - name: Re-enable sudo
-        uses: gregclermont/egress-filter/enable-sudo@test
+        uses: SekoiaLab/egress-filter/enable-sudo@test
 
       - name: Verify sudo is re-enabled
         run: |
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: "Start egress filter (default: sudo disabled)"
-        uses: gregclermont/egress-filter@test
+        uses: SekoiaLab/egress-filter@test
         with:
           policy: |
             # Empty policy, just testing sudo behavior
