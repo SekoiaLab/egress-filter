@@ -14,11 +14,11 @@ RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
 
 # Full path to the Runner.Worker executable
 # This process spawns each step and sets GITHUB_* env vars in children
-RUNNER_WORKER_EXE = "/home/runner/actions-runner/cached/bin/Runner.Worker"
+RUNNER_WORKER_EXE = "/home/runner/actions-runner/extracted/bin/Runner.Worker"
 
 # Node.js executable path for actions using node24 runtime
 # Must match the 'using' field in action.yml
-NODE24_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
+NODE24_EXE = "/home/runner/actions-runner/extracted/externals/node24/bin/node"
 
 
 def validate_runner_environment() -> list[str]:
@@ -49,10 +49,10 @@ def validate_runner_environment() -> list[str]:
     worker_idx = exe_paths.index(RUNNER_WORKER_EXE) if RUNNER_WORKER_EXE in exe_paths else -1
 
     if node24_idx != 4:
-        errors.append(f"node24 at index {node24_idx}, expected 4")
+        errors.append(f"node24 at index {node24_idx}, expected 4. index 4 is '{exe_paths[4]}'.")
 
     if worker_idx != 5:
-        errors.append(f"Runner.Worker at index {worker_idx}, expected 5")
+        errors.append(f"Runner.Worker at index {worker_idx}, expected 5. index 5 is '{exe_paths[5]}'.")
 
     # Check cgroup of Runner.Worker (proxy itself runs in its own scope)
     if worker_idx >= 0:

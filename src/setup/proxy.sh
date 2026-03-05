@@ -108,6 +108,8 @@ start_proxy() {
         if ! kill -0 $supervisor_pid 2>/dev/null; then
             echo "Supervisor died! Output:"
             cat "$TEMP_DIR/proxy-stdout.log" || true
+            echo "Proxy log:"
+            cat "$TEMP_DIR/proxy.log" || true
             exit 1
         fi
         if [ $counter -gt 100 ]; then
