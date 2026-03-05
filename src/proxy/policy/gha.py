@@ -49,10 +49,18 @@ def validate_runner_environment() -> list[str]:
     worker_idx = exe_paths.index(RUNNER_WORKER_EXE) if RUNNER_WORKER_EXE in exe_paths else -1
 
     if node24_idx != 4:
-        errors.append(f"node24 at index {node24_idx}, expected 4")
+        actual_at_4 = exe_paths[4] if len(exe_paths) > 4 else "<missing>"
+        errors.append(
+            f"node24 at index {node24_idx}, expected 4"
+            f" (index 4 is {actual_at_4}; ancestry: {exe_paths})"
+        )
 
     if worker_idx != 5:
-        errors.append(f"Runner.Worker at index {worker_idx}, expected 5")
+        actual_at_5 = exe_paths[5] if len(exe_paths) > 5 else "<missing>"
+        errors.append(
+            f"Runner.Worker at index {worker_idx}, expected 5"
+            f" (index 5 is {actual_at_5}; ancestry: {exe_paths})"
+        )
 
     # Check cgroup of Runner.Worker (proxy itself runs in its own scope)
     if worker_idx >= 0:
