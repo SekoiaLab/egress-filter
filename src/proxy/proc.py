@@ -7,7 +7,7 @@ import re
 import socket
 from pathlib import Path
 
-from proxy.policy.gha import RUNNER_CGROUP, RUNNER_WORKER_EXE
+from proxy.policy.gha import RUNNER_CGROUP, is_runner_worker
 
 
 # =============================================================================
@@ -217,10 +217,10 @@ def find_trusted_github_pids(pid: int) -> list[int]:
 
     ancestry = get_process_ancestry(pid)
 
-    # Find Runner.Worker in ancestry (using full exe path to prevent spoofing)
+    # Find Runner.Worker in ancestry (using exe path pattern to prevent spoofing)
     runner_idx = None
     for i, (p, exe) in enumerate(ancestry):
-        if exe == RUNNER_WORKER_EXE:
+        if is_runner_worker(exe):
             runner_idx = i
             break
 
