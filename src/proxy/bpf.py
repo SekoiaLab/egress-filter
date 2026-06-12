@@ -63,6 +63,10 @@ class BPFState:
         # Blocks SOCK_RAW and AF_PACKET to prevent iptables bypass
         self.bpf_links.append(self.bpf_obj.program("block_raw_sockets").attach_cgroup(root_cgroup))
 
+        # NAT source-port reversal: cgroup_skb/egress re-keys the map under the
+        # post-NAT (mangled) source port so the proxy's lookup hits directly.
+        self.bpf_links.append(self.bpf_obj.program("rekey_nat_egress").attach_cgroup(root_cgroup))
+
         self.map_v4 = self.bpf_obj.maps["conn_to_pid_v4"].typed(key=ConnKeyV4, value=int)
 
         proxy_logging.logger.info("BPF loaded and attached")
