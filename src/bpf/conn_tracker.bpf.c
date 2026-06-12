@@ -221,4 +221,87 @@ int kprobe_udp_sendmsg(struct pt_regs *ctx) {
     return 0;
 }
 
+// ============================================
+// NAT source-port reversal: cgroup_skb/egress
+// ============================================
+// iptables REDIRECT (DNAT to the proxy) collapses every destination onto the
+// single proxy socket :8080. Under load, netfilter remaps colliding source
+// ports, so the port the proxy sees (peername) differs from the original
+// ephemeral port the tcp_connect kprobe recorded as the map key — the proxy's
+// lookup then misses and the connection can't be attributed.
+//
+// This egress hook runs after NAT (in ip_finish_output, past POSTROUTING), so
+// the packet carries the post-NAT (possibly mangled) source port, while
+// skb->sk still holds the original socket tuple (NAT rewrites the packet, not
+// the socket). On the SYN, when the two differ, we look up the PID already
+// stored under the original key (by tcp_connect) and add a second entry under
+// the post-NAT key, so the proxy's existing lookup hits directly. No userspace
+// changes are needed.
+//
+// We avoid reading conntrack structs: nf_conn isn't in the kernel BTF here
+// (conntrack is a module), so CO-RE can't traverse it. Everything we need is
+// in struct bpf_sock and the packet headers.
+
+SEC("cgroup_skb/egress")
+int rekey_nat_egress(struct __sk_buff *skb) {
+    // cgroup_skb must return 1 (allow); 0 would drop the packet.
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+
+    struct iphdr *ip = data;
+    if ((void *)(ip + 1) > data_end)
+        return 1;
+    if (ip->version != 4 || ip->protocol != IPPROTO_TCP)
+        return 1;
+
+    u32 ihl = ip->ihl * 4;
+    if (ihl < sizeof(*ip))
+        return 1;
+    struct tcphdr *tcp = (void *)ip + ihl;
+    if ((void *)(tcp + 1) > data_end)
+        return 1;
+    if (!tcp->syn)  // only act once, on connection setup
+        return 1;
+
+    // skb->sk is exposed as sock_common; promote to a full socket so the
+    // verifier lets us read protocol / addresses / ports.
+    struct bpf_sock *sk = skb->sk;
+    if (!sk)
+        return 1;
+    sk = bpf_sk_fullsock(sk);
+    if (!sk || sk->protocol != IPPROTO_TCP)
+        return 1;
+
+    // Original tuple from the socket (NAT didn't touch it).
+    u32 orig_dst_ip = sk->dst_ip4;             // network order
+    u16 orig_dst_port = bpf_ntohs(sk->dst_port);  // dst_port is network order
+    u16 orig_src_port = sk->src_port;          // already host order
+    // Post-NAT source port from the packet.
+    u16 nat_src_port = bpf_ntohs(tcp->source);
+
+    if (nat_src_port == orig_src_port || orig_dst_ip == 0)
+        return 1;  // not mangled
+
+    struct conn_key_v4 orig_key = {
+        .dst_ip = orig_dst_ip,
+        .src_port = orig_src_port,
+        .dst_port = orig_dst_port,
+        .protocol = IPPROTO_TCP,
+    };
+    u32 *pid = bpf_map_lookup_elem(&conn_to_pid_v4, &orig_key);
+    if (!pid)
+        return 1;  // not a connection we tracked
+
+    struct conn_key_v4 nat_key = {
+        .dst_ip = orig_dst_ip,
+        .src_port = nat_src_port,
+        .dst_port = orig_dst_port,
+        .protocol = IPPROTO_TCP,
+    };
+    u32 val = *pid;
+    bpf_map_update_elem(&conn_to_pid_v4, &nat_key, &val, BPF_ANY);
+
+    return 1;
+}
+
 char LICENSE[] SEC("license") = "GPL";
