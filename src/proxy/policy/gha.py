@@ -13,9 +13,10 @@ import re
 # Used to distinguish runner processes from Docker containers, Azure agent, etc.
 RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
 
-# Runner exe paths vary by installation method: "cached", "extracted", or
-# a version directory like "2.331.0". Match the stable prefix + suffix.
-_RUNNER_BASE = r"/home/runner/actions-runner/[^/]+/"
+# Runner exe paths vary by installation method: "cached", "extracted", a
+# version directory like "2.331.0", or nested like "cached/2.334.0".
+# Match the stable prefix + suffix with one or more directories between.
+_RUNNER_BASE = r"/home/runner/actions-runner/(?:[^/]+/)+"
 _RUNNER_WORKER_RE = re.compile(_RUNNER_BASE + r"bin/Runner\.Worker$")
 _NODE24_RE = re.compile(_RUNNER_BASE + r"externals/node24/bin/node$")
 
