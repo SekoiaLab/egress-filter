@@ -7,18 +7,26 @@ of any specific action. They're used for:
 """
 
 import os
+import re
 
 # Cgroup path for processes in the runner's process tree
 # Used to distinguish runner processes from Docker containers, Azure agent, etc.
 RUNNER_CGROUP = "/system.slice/hosted-compute-agent.service"
 
-# Full path to the Runner.Worker executable
-# This process spawns each step and sets GITHUB_* env vars in children
-RUNNER_WORKER_EXE = "/home/runner/actions-runner/cached/bin/Runner.Worker"
+# Runner exe paths vary by installation method: "cached", "extracted", a
+# version directory like "2.331.0", or nested like "cached/2.334.0".
+# Match the stable prefix + suffix with one or more directories between.
+_RUNNER_BASE = r"/home/runner/actions-runner/(?:[^/]+/)+"
+_RUNNER_WORKER_RE = re.compile(_RUNNER_BASE + r"bin/Runner\.Worker$")
+_NODE24_RE = re.compile(_RUNNER_BASE + r"externals/node24/bin/node$")
 
-# Node.js executable path for actions using node24 runtime
-# Must match the 'using' field in action.yml
-NODE24_EXE = "/home/runner/actions-runner/cached/externals/node24/bin/node"
+
+def is_runner_worker(exe: str) -> bool:
+    return _RUNNER_WORKER_RE.match(exe) is not None
+
+
+def is_node24(exe: str) -> bool:
+    return _NODE24_RE.match(exe) is not None
 
 
 def validate_runner_environment() -> list[str]:
@@ -44,15 +52,23 @@ def validate_runner_environment() -> list[str]:
     ancestry = get_process_ancestry(os.getpid(), max_depth=10)
     exe_paths = [exe for _, exe in ancestry]
 
-    # Expected positions (strict - no tolerance)
-    node24_idx = exe_paths.index(NODE24_EXE) if NODE24_EXE in exe_paths else -1
-    worker_idx = exe_paths.index(RUNNER_WORKER_EXE) if RUNNER_WORKER_EXE in exe_paths else -1
+    # Find positions by pattern match
+    node24_idx = next((i for i, exe in enumerate(exe_paths) if is_node24(exe)), -1)
+    worker_idx = next((i for i, exe in enumerate(exe_paths) if is_runner_worker(exe)), -1)
 
     if node24_idx != 4:
-        errors.append(f"node24 at index {node24_idx}, expected 4")
+        actual_at_4 = exe_paths[4] if len(exe_paths) > 4 else "<missing>"
+        errors.append(
+            f"node24 at index {node24_idx}, expected 4"
+            f" (index 4 is {actual_at_4}; ancestry: {exe_paths})"
+        )
 
     if worker_idx != 5:
-        errors.append(f"Runner.Worker at index {worker_idx}, expected 5")
+        actual_at_5 = exe_paths[5] if len(exe_paths) > 5 else "<missing>"
+        errors.append(
+            f"Runner.Worker at index {worker_idx}, expected 5"
+            f" (index 5 is {actual_at_5}; ancestry: {exe_paths})"
+        )
 
     # Check cgroup of Runner.Worker (proxy itself runs in its own scope)
     if worker_idx >= 0:

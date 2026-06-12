@@ -30,6 +30,12 @@ def init_logging() -> logging.Logger:
     handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
     logger.addHandler(handler)
 
+    # Also send ERROR+ to stderr so startup failures appear in supervisor output
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setLevel(logging.ERROR)
+    stderr_handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(stderr_handler)
+
     # Connection events file (JSONL format, line-buffered)
     _conn_file = open(CONNECTIONS_FILE, "a", buffering=1)
 
