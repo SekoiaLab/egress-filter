@@ -7,7 +7,7 @@ import re
 import socket
 from pathlib import Path
 
-from proxy.policy.gha import RUNNER_CGROUP, is_runner_worker
+from proxy.policy.gha import is_runner_worker, runner_cgroup
 
 
 # =============================================================================
@@ -197,7 +197,7 @@ def get_process_ancestry(pid: int, max_depth: int = 10) -> list[tuple[int, str]]
 def is_runner_process(pid: int) -> bool:
     """Check if process is in the runner cgroup (quick filter)."""
     cgroup = get_cgroup_path(pid)
-    return cgroup == RUNNER_CGROUP if cgroup else False
+    return cgroup == runner_cgroup() if cgroup else False
 
 
 def find_trusted_github_pids(pid: int) -> list[int]:
