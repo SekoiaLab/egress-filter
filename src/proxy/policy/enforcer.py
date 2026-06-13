@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Protocol
 from urllib.parse import urlparse
 
-from .defaults import RUNNER_DEFAULTS, get_defaults
+from .defaults import get_defaults, runner_defaults
 from .dns_cache import DNSIPCache
 from .matcher import ConnectionEvent, PolicyMatcher
 from .parser import parse_github_repository, substitute_placeholders
@@ -514,5 +514,5 @@ class PolicyEnforcer:
 
         if include_defaults:
             policy_text = get_defaults() + "\n" + policy_text
-        matcher = PolicyMatcher(policy_text, defaults=RUNNER_DEFAULTS)
+        matcher = PolicyMatcher(policy_text, defaults=runner_defaults())
         return cls(matcher, dns_cache, audit_mode)

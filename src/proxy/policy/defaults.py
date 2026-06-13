@@ -5,12 +5,19 @@ to function properly. They can be auto-included with `include: defaults` or
 via the enforcer's `include_defaults=True` option.
 """
 
-from .gha import RUNNER_CGROUP
+from .gha import RUNNER_CGROUP, runner_cgroup
 from .types import DefaultContext
 
-# Defaults for GitHub Actions runner (includes cgroup constraint)
-# This ensures all rules only match connections from the runner process tree
+# Defaults for GitHub Actions runner (includes cgroup constraint).
+# This ensures all rules only match connections from the runner process tree.
+# Static default (back-compat / tests); the proxy uses runner_defaults() so it
+# picks up the cgroup derived at startup.
 RUNNER_DEFAULTS = DefaultContext(attrs={"cgroup": RUNNER_CGROUP})
+
+
+def runner_defaults() -> DefaultContext:
+    """Runner default context using the effective (possibly derived) cgroup."""
+    return DefaultContext(attrs={"cgroup": runner_cgroup()})
 
 # Default rules for GitHub-hosted runners
 # These are automatically applied unless disabled
